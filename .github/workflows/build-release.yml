@@ -1,0 +1,205 @@
+name: Build and Release Launcher
+
+permissions:
+  contents: write
+
+on:
+  release:
+    types: [published]
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+# =========================
+# WINDOWS
+# =========================
+  build-windows:
+    name: Build Launcher Windows
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Clone source repositories
+        shell: bash
+        run: |
+          git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/Cesar073/POS-Launcher.git src/launcher
+
+          mkdir workspace
+          mkdir -p workspace/build
+          cp -r src/launcher workspace/launcher
+          cp -r build/* workspace/build/
+          cp requirements*.txt workspace/
+          cp src/launcher/main.py workspace/main.py
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Dependency Walker (Nuitka)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://dependencywalker.com/depends22_x86.zip -OutFile depends.zip
+          Expand-Archive depends.zip C:\depends -Force
+          echo "C:\depends" >> $env:GITHUB_PATH
+
+      - name: Install Python dependencies
+        working-directory: workspace
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt
+          pip install -r requirements.txt
+
+      - name: Update version
+        shell: pwsh
+        run: |
+          $file = "workspace/launcher/resources/version.py"
+          (Get-Content $file) -replace '__version__ = ".*"', '__version__ = "${{ github.event.inputs.version }}"' | Set-Content $file
+
+      - name: GitHub Release (Windows)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: v${{ github.event.inputs.version }}
+          body: ${{ github.event.inputs.changelog }}
+          files: |
+            POS_Launcher_Windows.exe
+            launcher/version.json
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# # =========================
+# # RASPBIAN
+# # =========================
+#   build-raspbian:
+#     name: Build Raspbian
+#     runs-on: ubuntu-latest
+#     if: ${{ github.event.inputs.build_pos_raspbian == 'true' || github.event.inputs.build_launcher_raspbian == 'true' }}
+
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: actions/setup-python@v5
+#         with:
+#           python-version: ${{ env.PYTHON_VERSION }}
+
+#       - name: Clone source repositories
+#         run: |
+#           git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/Cesar073/pos_gui.git src/pos_gui
+#           git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/Cesar073/Point_of_Sale.git src/pos_core
+#           git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/Cesar073/pos_repository.git src/pos_repository
+
+#           mkdir workspace
+#           cp -r src/pos_gui workspace/pos_gui
+#           cp -r src/pos_core workspace/pos_core
+#           cp -r src/pos_repository workspace/repository
+#           cp -r build launcher workspace/
+#           cp requirements*.txt workspace/
+#           cp src/pos_gui/main.py workspace/main.py
+
+#       - name: Install deps
+#         working-directory: workspace
+#         run: |
+#           pip install -r requirements-build.txt
+#           pip install -r requirements.txt
+
+#       - name: Build POS (Raspbian)
+#         if: ${{ github.event.inputs.build_pos_raspbian == 'true' }}
+#         working-directory: workspace
+#         run: python build/rpi/build_rpi.py
+
+#       - name: Build Launcher (Raspbian)
+#         if: ${{ github.event.inputs.build_launcher_raspbian == 'true' }}
+#         working-directory: workspace
+#         run: python build/rpi/build_launcher.py
+
+#       - name: Package POS (Raspbian)
+#         if: ${{ github.event.inputs.build_pos_raspbian == 'true' }}
+#         run: tar -czf POS-Raspbian-v${{ github.event.inputs.version }}.tar.gz -C workspace/dist POS
+
+#       - name: Copy Launcher binary
+#         if: ${{ github.event.inputs.build_launcher_raspbian == 'true' }}
+#         shell: pwsh
+#         run: cp workspace/dist/POS_Launcher_Raspbian .
+
+#       - name: Upload POS artifact (Raspbian)
+#         if: ${{ github.event.inputs.build_pos_raspbian == 'true' }}
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: POS-Raspbian-v${{ github.event.inputs.version }}
+#           path: POS-Raspbian-v${{ github.event.inputs.version }}.tar.gz
+
+#       - name: Upload Launcher artifact (Raspbian)
+#         if: ${{ github.event.inputs.build_launcher_raspbian == 'true' }}
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: POS-Launcher-Raspbian-v${{ github.event.inputs.version }}
+#           path: POS_Launcher_Raspbian
+
+# # =========================
+# # LINUX
+# # =========================
+#   build-linux:
+#     name: Build Linux
+#     runs-on: ubuntu-latest
+#     if: ${{ github.event.inputs.build_pos_linux == 'true' || github.event.inputs.build_launcher_linux == 'true' }}
+
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: actions/setup-python@v5
+#         with:
+#           python-version: ${{ env.PYTHON_VERSION }}
+
+#       - name: Clone source repositories
+#         run: |
+#           git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/Cesar073/pos_gui.git src/pos_gui
+#           git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/Cesar073/Point_of_Sale.git src/pos_core
+#           git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/Cesar073/pos_repository.git src/pos_repository
+
+#           mkdir workspace
+#           cp -r src/pos_gui workspace/pos_gui
+#           cp -r src/pos_core workspace/pos_core
+#           cp -r src/pos_repository workspace/repository
+#           cp -r build launcher workspace/
+#           cp requirements*.txt workspace/
+#           cp src/pos_gui/main.py workspace/main.py
+
+#       - name: Install deps
+#         working-directory: workspace
+#         run: |
+#           pip install -r requirements-build.txt
+#           pip install -r requirements.txt
+
+#       - name: Build POS (Linux)
+#         if: ${{ github.event.inputs.build_pos_linux == 'true' }}
+#         working-directory: workspace
+#         run: python build/linux/build_linux.py
+
+#       - name: Build Launcher (Linux)
+#         if: ${{ github.event.inputs.build_launcher_linux == 'true' }}
+#         working-directory: workspace
+#         run: python build/linux/build_launcher.py
+
+#       - name: Package POS (Linux)
+#         if: ${{ github.event.inputs.build_pos_linux == 'true' }}
+#         run: tar -czf POS-Linux-v${{ github.event.inputs.version }}.tar.gz -C workspace/dist POS
+
+#       - name: Copy Launcher binary
+#         if: ${{ github.event.inputs.build_launcher_linux == 'true' }}
+#         shell: pwsh
+#         run: cp workspace/dist/POS_Launcher_Linux .
+
+#       - name: Upload POS artifact (Raspbian)
+#         if: ${{ github.event.inputs.build_pos_linux == 'true' }}
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: POS-Linux-v${{ github.event.inputs.version }}
+#           path: POS-Linux-v${{ github.event.inputs.version }}.tar.gz
+
+#       - name: Upload Launcher artifact (Raspbian)
+#         if: ${{ github.event.inputs.build_launcher_linux == 'true' }}
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: POS-Launcher-Linux-v${{ github.event.inputs.version }}
+#           path: POS_Launcher_Linux

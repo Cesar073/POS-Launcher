@@ -1,0 +1,46 @@
+# Compilación
+dist/*
+!dist/.keep
+build/*.build/
+build/*.dist/
+*.onefile-build/
+downloads/
+secrets/*
+*.exe
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+Pipfile
+Pipfile.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Credenciales (NUNCA commitear)
+credentials.json
+*.json.bak
+service_account.json
+
+# Temporales
+*.tmp
+*.temp
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Código fuente clonado (se clona en CI)
+src/
+workspace/

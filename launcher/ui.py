@@ -1,0 +1,611 @@
+"""
+Interfaz gráfica del Launcher.
+
+Ventana de actualización usando CustomTkinter con:
+- Información de la nueva versión
+- Changelog/notas de la versión
+- Barra de progreso para descarga
+- Botones para actualizar u omitir
+
+El diseño sigue la misma estética que la aplicación POS principal.
+"""
+
+import customtkinter as ctk
+from typing import Optional, Callable
+import threading
+
+from resources.config import (
+    WINDOW_WIDTH,
+    WINDOW_HEIGHT,
+    WINDOW_TITLE,
+    THEME_PRIMARY,
+    THEME_SUCCESS,
+    THEME_ERROR,
+    ALLOW_SKIP_UPDATE,
+)
+from updater import Updater, UpdateInfo, UpdateError
+
+
+class LauncherUI(ctk.CTk):
+    """
+    Ventana principal del launcher.
+    
+    Muestra información sobre actualizaciones disponibles y
+    permite al usuario actualizar o continuar sin actualizar.
+    """
+    
+    def __init__(
+        self,
+        updater: Updater,
+        update_info: Optional[UpdateInfo] = None,
+        on_update_complete: Optional[Callable[[], None]] = None,
+        on_skip: Optional[Callable[[], None]] = None,
+        on_start_app: Optional[Callable[[], None]] = None,
+        check_callback: Optional[Callable[[], None]] = None,
+    ):
+        """
+        Inicializa la ventana del launcher.
+        
+        Args:
+            updater: Instancia del Updater
+            update_info: Información de la actualización disponible (None si está buscando)
+            on_update_complete: Callback cuando la actualización termina
+            on_skip: Callback cuando el usuario omite la actualización
+            on_start_app: Callback cuando se debe iniciar la app (sin actualización)
+            check_callback: Callback para iniciar la búsqueda de actualizaciones (se llamará después del delay)
+        """
+        super().__init__()
+        
+        self.updater = updater
+        self.update_info = update_info
+        self.on_update_complete = on_update_complete
+        self.on_skip = on_skip
+        self.on_start_app = on_start_app
+        self.check_callback = check_callback
+        
+        self._is_updating = False
+        self._is_checking = update_info is None
+        
+        # Configurar ventana
+        self._setup_window()
+        
+        # Crear widgets
+        self._create_widgets()
+        
+        # Forzar actualización del layout después de crear todos los widgets
+        self.after(100, self._apply_button_sizing)
+        
+        # Si está en modo "buscando", configurar UI inicial
+        if self._is_checking:
+            self._show_checking_state()
+            # Programar la búsqueda de actualizaciones después de 0.5 segundos
+            if self.check_callback:
+                self.after(1500, self._start_checking)
+    
+    def _setup_window(self) -> None:
+        """Configura la ventana principal."""
+        self.title(WINDOW_TITLE)
+        self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
+        self.resizable(False, False)
+        
+        # Centrar ventana
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() - WINDOW_WIDTH) // 2
+        y = (self.winfo_screenheight() - WINDOW_HEIGHT) // 2
+        self.geometry(f"+{x}+{y}")
+        
+        # Configurar tema
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
+        
+        # Manejar cierre de ventana
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+    
+    def _create_widgets(self) -> None:
+        """Crea todos los widgets de la interfaz."""
+        # Frame principal con padding
+        self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # === Encabezado ===
+        self._create_header()
+        
+        # === Información de versión ===
+        self._create_version_info()
+        
+        # === Changelog ===
+        self._create_changelog()
+        
+        # === Barra de progreso (oculta inicialmente) ===
+        self._create_progress_section()
+        
+        # === Botones ===
+        self._create_buttons()
+    
+    def _create_header(self) -> None:
+        """Crea el encabezado con título."""
+        header_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        header_frame.pack(fill="x", pady=(0, 15))
+        
+        # Ícono o título grande
+        self.title_label = ctk.CTkLabel(
+            header_frame,
+            text="🔄 Actualización Disponible",
+            font=ctk.CTkFont(size=22, weight="bold"),
+        )
+        self.title_label.pack()
+        
+        # Subtítulo
+        self.subtitle_label = ctk.CTkLabel(
+            header_frame,
+            text="Hay una nueva versión del Sistema POS",
+            font=ctk.CTkFont(size=13),
+            text_color="gray",
+        )
+        self.subtitle_label.pack(pady=(5, 0))
+    
+    def _show_checking_state(self) -> None:
+        """Muestra el estado de búsqueda de actualizaciones."""
+        self.title_label.configure(text="🔍 Buscando Actualizaciones...")
+        self.subtitle_label.configure(
+            text="Verificando si hay nuevas versiones disponibles",
+            text_color="gray",
+        )
+        
+        # Ocultar widgets que no se necesitan mientras busca
+        if hasattr(self, 'version_frame'):
+            self.version_frame.pack_forget()
+        if hasattr(self, 'changelog_frame'):
+            self.changelog_frame.pack_forget()
+        if hasattr(self, 'button_frame'):
+            self.button_frame.pack_forget()
+        
+        # Mostrar barra de progreso indeterminada
+        if hasattr(self, 'progress_frame'):
+            self.progress_frame.pack(fill="x", pady=(0, 15))
+            self.progress_bar.configure(mode="indeterminate")
+            self.progress_bar.start()
+            self.status_label.configure(text="Buscando actualizaciones...")
+            self.progress_label.configure(text="")
+    
+    def update_with_result(self, update_info: Optional[UpdateInfo]) -> None:
+        """
+        Actualiza la UI con el resultado de la búsqueda de actualizaciones.
+        
+        Args:
+            update_info: Información de actualización o None si no hay actualización
+        """
+        self.update_info = update_info
+        self._is_checking = False
+        
+        # Detener barra de progreso
+        if hasattr(self, 'progress_bar'):
+            self.progress_bar.stop()
+            self.progress_frame.pack_forget()
+        
+        if update_info:
+            # Hay actualización disponible
+            self.title_label.configure(text="🔄 Actualización Disponible")
+            self.subtitle_label.configure(
+                text="Hay una nueva versión del Sistema POS",
+                text_color="gray",
+            )
+            
+            # Mostrar widgets de actualización
+            if hasattr(self, 'version_frame'):
+                self.version_frame.pack(fill="x", pady=(0, 15))
+            if hasattr(self, 'changelog_frame'):
+                self.changelog_frame.pack(fill="both", expand=True, pady=(0, 15))
+            if hasattr(self, 'button_frame'):
+                self.button_frame.pack(fill="x")
+            
+            # Actualizar información de versión
+            self._update_version_info()
+            self._update_changelog()
+        else:
+            # No hay actualización - iniciar app directamente
+            if self.on_start_app:
+                self.after(500, self._start_app_and_close)  # Esperar 0.5s antes de iniciar
+            else:
+                self.destroy()
+    
+    def _update_version_info(self) -> None:
+        """Actualiza la información de versión en la UI."""
+        if self.update_info:
+            # Mostrar flecha y nueva versión
+            self.arrow_label.grid(row=0, column=1)
+            self.new_version_frame.grid(row=0, column=2, padx=15, pady=15)
+            self.new_version_label.configure(text=f"v{self.update_info.version}")
+        else:
+            # Ocultar flecha y nueva versión
+            self.arrow_label.grid_remove()
+            self.new_version_frame.grid_remove()
+    
+    def _update_changelog(self) -> None:
+        """Actualiza el changelog en la UI."""
+        if self.update_info and hasattr(self, 'changelog_text'):
+            self.changelog_text.configure(state="normal")
+            self.changelog_text.delete("1.0", "end")
+            changelog = self.update_info.changelog or "Sin descripción disponible"
+            self.changelog_text.insert("1.0", changelog)
+            self.changelog_text.configure(state="disabled")
+    
+    def _start_app_and_close(self) -> None:
+        """Inicia la app y cierra la ventana."""
+        if self.on_start_app:
+            self.on_start_app()
+        self.destroy()
+    
+    def _start_checking(self) -> None:
+        """Inicia la búsqueda de actualizaciones (llamado después del delay inicial)."""
+        if self.check_callback:
+            self.check_callback()
+    
+    def _create_version_info(self) -> None:
+        """Crea la sección de información de versión."""
+        self.version_frame = ctk.CTkFrame(self.main_frame)
+        self.version_frame.pack(fill="x", pady=(0, 15))
+        
+        # Grid para las versiones
+        self.version_frame.grid_columnconfigure(0, weight=1)
+        self.version_frame.grid_columnconfigure(1, weight=0)
+        self.version_frame.grid_columnconfigure(2, weight=1)
+        
+        # Versión actual
+        current_frame = ctk.CTkFrame(self.version_frame, fg_color="transparent")
+        current_frame.grid(row=0, column=0, padx=15, pady=15)
+        
+        ctk.CTkLabel(
+            current_frame,
+            text="Versión actual",
+            font=ctk.CTkFont(size=11),
+            text_color="gray",
+        ).pack()
+        
+        if self.updater.current_version is None:
+            current_version_label = "Sin instalación"
+        else:
+            current_version_label = f"v{self.updater.current_version}"
+        ctk.CTkLabel(
+            current_frame,
+            text=current_version_label,
+            font=ctk.CTkFont(size=16, weight="bold"),
+        ).pack()
+        
+        # Flecha (solo se muestra si hay actualización)
+        self.arrow_label = ctk.CTkLabel(
+            self.version_frame,
+            text="→",
+            font=ctk.CTkFont(size=24),
+            text_color=THEME_PRIMARY,
+        )
+        
+        # Nueva versión
+        self.new_version_frame = ctk.CTkFrame(self.version_frame, fg_color="transparent")
+        
+        ctk.CTkLabel(
+            self.new_version_frame,
+            text="Nueva versión",
+            font=ctk.CTkFont(size=11),
+            text_color="gray",
+        ).pack()
+        
+        self.new_version_label = ctk.CTkLabel(
+            self.new_version_frame,
+            text="",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=THEME_SUCCESS,
+        )
+        self.new_version_label.pack()
+        
+        # Solo mostrar nueva versión si hay update_info
+        if self.update_info:
+            self._update_version_info()
+    
+    def _create_changelog(self) -> None:
+        """Crea la sección del changelog."""
+        self.changelog_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.changelog_frame.pack(fill="both", expand=True, pady=(0, 15))
+        
+        # Título
+        ctk.CTkLabel(
+            self.changelog_frame,
+            text="📋 Notas de la versión:",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            anchor="w",
+        ).pack(fill="x")
+        
+        # Área de texto para el changelog
+        self.changelog_text = ctk.CTkTextbox(
+            self.changelog_frame,
+            font=ctk.CTkFont(size=12),
+            wrap="word",
+            height=120,
+        )
+        self.changelog_text.pack(fill="both", expand=True, pady=(8, 0))
+        
+        # Insertar changelog solo si hay update_info
+        if self.update_info:
+            changelog = self.update_info.changelog or "Sin descripción disponible"
+            self.changelog_text.insert("1.0", changelog)
+        self.changelog_text.configure(state="disabled")  # Solo lectura
+    
+    def _create_progress_section(self) -> None:
+        """Crea la sección de progreso (oculta inicialmente)."""
+        self.progress_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        # No se empaqueta aquí, se mostrará durante la descarga
+        
+        # Etiqueta de estado
+        self.status_label = ctk.CTkLabel(
+            self.progress_frame,
+            text="Descargando actualización...",
+            font=ctk.CTkFont(size=12),
+        )
+        self.status_label.pack(fill="x")
+        
+        # Barra de progreso
+        self.progress_bar = ctk.CTkProgressBar(
+            self.progress_frame,
+            mode="determinate",
+        )
+        self.progress_bar.pack(fill="x", pady=(8, 0))
+        self.progress_bar.set(0)
+        
+        # Porcentaje
+        self.progress_label = ctk.CTkLabel(
+            self.progress_frame,
+            text="0%",
+            font=ctk.CTkFont(size=11),
+            text_color="gray",
+        )
+        self.progress_label.pack(pady=(5, 0))
+    
+    def _create_buttons(self) -> None:
+        """Crea los botones de acción."""
+        self.button_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.button_frame.pack(fill="x", pady=(10, 0))  # Más espacio arriba
+        
+        # Botón secundario: Omitir (si está permitido)
+        if ALLOW_SKIP_UPDATE:
+            self.skip_button = ctk.CTkButton(
+                self.button_frame,
+                text="Omitir por ahora",
+                font=ctk.CTkFont(size=13),
+                fg_color="transparent",
+                border_width=1,
+                text_color=("gray70", "gray30"),
+                hover_color=("gray20", "gray80"),
+                command=self._on_skip_clicked,
+                width=140,
+                corner_radius=8,
+            )
+            # Usar ipady (padding interno vertical) para aumentar altura visual
+            self.skip_button.pack(side="left", padx=(0, 10), ipady=35)
+            # Forzar actualización del layout
+            self.update_idletasks()
+        
+        # Botón principal: Actualizar
+        self.update_button = ctk.CTkButton(
+            self.button_frame,
+            text="Actualizar ahora",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=THEME_PRIMARY,
+            hover_color="#1557b0",
+            command=self._on_update_clicked,
+            width=160,
+            corner_radius=8,
+        )
+        # Usar ipady (padding interno vertical) para aumentar altura visual
+        self.update_button.pack(side="right", ipady=35)
+    
+    def _apply_button_sizing(self) -> None:
+        """Re-aplica el tamaño de los botones para asegurar que se vean correctamente."""
+        # Re-empaquetar botones con ipady para forzar el tamaño
+        if hasattr(self, 'skip_button'):
+            self.skip_button.pack_forget()
+            self.skip_button.pack(side="left", padx=(0, 10), ipady=35)
+        
+        if hasattr(self, 'update_button'):
+            self.update_button.pack_forget()
+            self.update_button.pack(side="right", ipady=35)
+        
+        self.update_idletasks()
+    
+    def _on_update_clicked(self) -> None:
+        """Maneja clic en botón Actualizar."""
+        if self._is_updating:
+            return
+        
+        self._is_updating = True
+        self._start_update_ui()
+        
+        # Iniciar descarga en hilo separado
+        thread = threading.Thread(target=self._download_and_apply, daemon=True)
+        thread.start()
+    
+    def _start_update_ui(self) -> None:
+        """Actualiza la UI para mostrar el progreso."""
+        # Deshabilitar botones
+        self.update_button.configure(state="disabled")
+        if hasattr(self, 'skip_button'):
+            self.skip_button.configure(state="disabled")
+        
+        # Ocultar changelog y mostrar progreso
+        self.changelog_text.master.pack_forget()
+        self.progress_frame.pack(fill="x", pady=(0, 15))
+        
+        # Configurar callback de progreso
+        self.updater.set_progress_callback(self._update_progress)
+    
+    def _update_progress(self, downloaded: int, total: int) -> None:
+        """
+        Actualiza la barra de progreso.
+        
+        Args:
+            downloaded: Bytes descargados
+            total: Bytes totales
+        """
+        if total > 0:
+            progress = downloaded / total
+            percentage = int(progress * 100)
+            
+            # Actualizar en el hilo principal
+            self.after(0, lambda: self._set_progress(progress, percentage, downloaded, total))
+    
+    def _set_progress(self, progress: float, percentage: int, downloaded: int, total: int) -> None:
+        """Actualiza los widgets de progreso (debe llamarse desde el hilo principal)."""
+        self.progress_bar.set(progress)
+        
+        # Formatear tamaños
+        downloaded_mb = downloaded / (1024 * 1024)
+        total_mb = total / (1024 * 1024)
+        
+        self.progress_label.configure(
+            text=f"{percentage}% ({downloaded_mb:.1f} MB / {total_mb:.1f} MB)"
+        )
+    
+    def _download_and_apply(self) -> None:
+        """Descarga y aplica la actualización (ejecuta en hilo separado)."""
+        try:
+            # Descargar
+            self.after(0, lambda: self.status_label.configure(text="Descargando actualización..."))
+            self.updater.download_update()
+            print("ui.py: _download_and_apply: self.updater.download_update: OK")
+            
+            # Aplicar
+            self.after(0, lambda: self.status_label.configure(text="Instalando actualización..."))
+            self.after(0, lambda: self.progress_bar.configure(mode="indeterminate"))
+            self.after(0, lambda: self.progress_bar.start())
+            print("ui.py: _download_and_apply: self.updater.apply_update: Pre-OK")
+            
+            self.updater.apply_update()
+            print("ui.py: _download_and_apply: self.updater.apply_update: Post-OK")
+            
+            # Éxito
+            self.after(0, self._on_update_success)
+        
+        except UpdateError as e:
+            self.after(0, lambda: self._on_update_error(str(e)))
+        except Exception as e:
+            self.after(0, lambda: self._on_update_error(f"Error inesperado: {e}"))
+    
+    def _on_update_success(self) -> None:
+        """Maneja actualización exitosa."""
+        self.progress_bar.stop()
+        
+        self.status_label.configure(
+            text="✅ ¡Actualización completada!",
+            text_color=THEME_SUCCESS,
+        )
+        self.progress_label.configure(text="Iniciando aplicación...")
+        
+        # Limpiar archivos temporales
+        self.updater.cleanup()
+        
+        # Esperar un momento y cerrar
+        self.after(1500, self._finish_update)
+    
+    def _finish_update(self) -> None:
+        """Finaliza la actualización y cierra."""
+        if self.on_update_complete:
+            self.on_update_complete()
+        self.destroy()
+    
+    def _on_update_error(self, error_message: str) -> None:
+        """
+        Maneja error durante la actualización.
+        
+        Args:
+            error_message: Mensaje de error
+        """
+        self.progress_bar.stop()
+        self.progress_bar.configure(mode="determinate")
+        self.progress_bar.set(0)
+        
+        self.status_label.configure(
+            text=f"❌ Error: {error_message}",
+            text_color=THEME_ERROR,
+        )
+        self.progress_label.configure(text="")
+        
+        # Rehabilitar botones
+        self._is_updating = False
+        self.update_button.configure(state="normal", text="Reintentar")
+        if hasattr(self, 'skip_button'):
+            self.skip_button.configure(state="normal")
+        
+        # Limpiar archivos temporales
+        self.updater.cleanup()
+    
+    def _on_skip_clicked(self) -> None:
+        """Maneja clic en botón Omitir."""
+        if self._is_updating:
+            return
+        
+        if self.on_skip:
+            self.on_skip()
+        self.destroy()
+    
+    def _on_close(self) -> None:
+        """Maneja cierre de ventana."""
+        if self._is_updating:
+            # No permitir cerrar durante actualización
+            return
+        
+        if self.on_skip:
+            self.on_skip()
+        self.destroy()
+
+
+class SplashScreen(ctk.CTkToplevel):
+    """
+    Ventana splash que se muestra mientras se verifica actualizaciones.
+    """
+    
+    def __init__(self, parent: Optional[ctk.CTk] = None):
+        """Inicializa la splash screen."""
+        super().__init__(parent)
+        
+        self.title("")
+        self.geometry("300x150")
+        self.resizable(False, False)
+        self.overrideredirect(True)  # Sin bordes de ventana
+        
+        # Centrar
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() - 300) // 2
+        y = (self.winfo_screenheight() - 150) // 2
+        self.geometry(f"+{x}+{y}")
+        
+        # Contenido
+        frame = ctk.CTkFrame(self)
+        frame.pack(fill="both", expand=True, padx=2, pady=2)
+        
+        ctk.CTkLabel(
+            frame,
+            text="Sistema POS",
+            font=ctk.CTkFont(size=20, weight="bold"),
+        ).pack(pady=(25, 10))
+        
+        self.status_label = ctk.CTkLabel(
+            frame,
+            text="Verificando actualizaciones...",
+            font=ctk.CTkFont(size=12),
+            text_color="gray",
+        )
+        self.status_label.pack()
+        
+        # Barra de progreso indeterminada
+        self.progress = ctk.CTkProgressBar(frame, mode="indeterminate", width=200)
+        self.progress.pack(pady=(15, 0))
+        self.progress.start()
+    
+    def set_status(self, text: str) -> None:
+        """Actualiza el texto de estado."""
+        self.status_label.configure(text=text)
+        self.update()
+    
+    def close(self) -> None:
+        """Cierra la splash screen."""
+        self.progress.stop()
+        self.destroy()

@@ -1,24 +1,3 @@
-PASOS A SEGUIR
-- Necesito separar en diferentes repos el launcher de la app.
-   - El PAT de cada repo debe ser de sólo lectura.
-- Crear su workflow para cada uno.
-   - Dejar de usar arfifacts y usar los releases privados.
-- Ajustar el código del laucher para:
-   - Revisar versiones y actualizar la app.
-- Ajustar el código de la app para:
-   - Ver en 2do plano si existe una nueva versión del launcher y actualizarla en silencio.
-
-
-
-
-
-
-
-
-
-
-
-
 # POS-Releases
 
 Repositorio de CI/CD para compilar y distribuir el Sistema POS.

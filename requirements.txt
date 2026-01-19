@@ -1,0 +1,13 @@
+# Dependencias de la aplicación POS
+customtkinter==5.2.2
+pygame==2.6.1
+pillow==11.3.0
+
+# Dependencias para compilación
+nuitka>=2.0
+ordered-set>=4.1.0
+zstandard>=0.22.0
+
+# Para subir a Google Drive
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
