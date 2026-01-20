@@ -129,7 +129,103 @@ class MethodLogger:
         if function_name:
             return function_name in self.trigger_functions
         return method_name in self.trigger_functions or (class_name and class_name in self.trigger_classes)
+
+    def _format_value(self, value, indent_level: int = 0) -> str:
+        """Formatea un valor recursivamente con indentación adecuada.
+        
+        Args:
+            value: El valor a formatear (puede ser cualquier tipo)
+            indent_level: Nivel de indentación actual (para estructuras anidadas)
+            
+        Returns:
+            String formateado con cada elemento en una línea
+        """
+        indent = "  " * indent_level
+        next_indent = "  " * (indent_level + 1)
+        
+        if value is None:
+            return "None"
+        elif isinstance(value, (int, float, bool)):
+            return str(value)
+        elif isinstance(value, str):
+            return value
+        elif isinstance(value, dict):
+            if not value:
+                return "{}"
+            lines = [f"{indent}{{"]  # Primera línea con indentación
+            for k, v in value.items():
+                formatted_value = self._format_value(v, indent_level + 1)
+                # Si el valor formateado tiene múltiples líneas, necesitamos manejar la indentación
+                if "\n" in formatted_value:
+                    value_lines = [line for line in formatted_value.split("\n") if line.strip()]  # Filtrar líneas vacías
+                    if not value_lines:
+                        lines.append(f"{next_indent}{k}: {{}}")
+                        continue
+                    
+                    # La primera línea del valor formateado tiene indentación (indent_level + 1)
+                    first_line = value_lines[0].strip()
+                    if first_line == "{":
+                        # Dict anidado: poner { en la misma línea que el nombre del campo
+                        lines.append(f"{next_indent}{k}: {{")
+                        # Las líneas siguientes (campos del dict anidado) ya tienen su indentación correcta
+                        for line in value_lines[1:]:
+                            if line.strip():  # Solo agregar líneas no vacías
+                                lines.append(line)
+                    else:
+                        # Otro tipo de estructura anidada (lista, etc.)
+                        lines.append(f"{next_indent}{k}: {first_line}")
+                        for line in value_lines[1:]:
+                            if line.strip():  # Solo agregar líneas no vacías
+                                lines.append(line)
+                else:
+                    lines.append(f"{next_indent}{k}: {formatted_value}")
+            lines.append(f"{indent}}}")
+            return "\n".join(lines)
+        elif isinstance(value, (list, tuple)):
+            if not value:
+                return "[]" if isinstance(value, list) else "()"
+            bracket_open = "[" if isinstance(value, list) else "("
+            bracket_close = "]" if isinstance(value, list) else ")"
+            lines = [bracket_open]
+            for item in value:
+                # Formatear el item con el nivel de indentación correcto
+                # El item se formatea con indent_level + 1, pero luego lo ponemos dentro de la lista
+                # que también tiene indent_level, así que necesitamos ajustar
+                formatted_item = self._format_value(item, indent_level + 1)
+                # Si el item formateado tiene múltiples líneas, las líneas ya tienen su indentación
+                # correcta (indent_level + 1), así que las usamos tal cual
+                if "\n" in formatted_item:
+                    item_lines = formatted_item.split("\n")
+                    for line in item_lines:
+                        lines.append(line)
+                else:
+                    lines.append(f"{next_indent}{formatted_item}")
+            lines.append(f"{indent}{bracket_close}")
+            return "\n".join(lines)
+        else:
+            # Para otros tipos de objetos, usar su representación string
+            return str(value)
     
+    def simplify_list(self, msg_list: list) -> str:
+        """Simplifica una lista de strings para que se pueda imprimir en un solo line."""
+        return self._format_value(msg_list)
+    
+    def simplify_dict(self, msg_dict: dict) -> str:
+        """Simplifica un diccionario para que se pueda imprimir en un solo line."""
+        return self._format_value(msg_dict)
+    
+    def simplify_tuple(self, msg_tuple: tuple) -> str:
+        """Simplifica una tupla para que se pueda imprimir en un solo line."""
+        return self._format_value(msg_tuple)
+    
+    def simplify_logging_message(self, message) -> str:
+        """Simplifica un mensaje de logging para que se pueda imprimir con formato adecuado.
+        
+        Cada elemento se imprime uno debajo de otro, y las estructuras anidadas
+        también se muestran con indentación apropiada.
+        """
+        return self._format_value(message, indent_level=0)
+
     def log_class(self, cls):
         """Decorador que loguea los métodos de una clase cuando se ejecutan.
         
@@ -172,7 +268,27 @@ class MethodLogger:
                     # Crear diccionario con argumentos
                     args_dict = dict(zip(params, args))
                     args_dict.update(kwargs)
-                    args_str = "\n    ".join([f"{k}: {v}" for k, v in args_dict.items()])
+                    
+                    # Formatear cada argumento correctamente
+                    args_lines = []
+                    for k, v in args_dict.items():
+                        formatted_value = logger.simplify_logging_message(v)
+                        # Si el valor tiene múltiples líneas, necesitamos manejar la indentación correctamente
+                        if "\n" in formatted_value:
+                            value_lines = formatted_value.split("\n")
+                            # La primera línea va con el nombre del argumento
+                            args_lines.append(f"{k}: {value_lines[0]}")
+                            # Las líneas siguientes necesitan indentación adicional para alinearlas
+                            # con el contenido del argumento (4 espacios base)
+                            for line in value_lines[1:]:
+                                # Si la línea ya tiene indentación del formateo recursivo, la mantenemos
+                                # pero agregamos la indentación base del argumento
+                                args_lines.append(f"    {line}")
+                        else:
+                            args_lines.append(f"{k}: {formatted_value}")
+                    
+                    # Unir las líneas - cada línea ya tiene su indentación correcta
+                    args_str = "\n    ".join(args_lines)
                     
                     # Log de entrada
                     input_msg = f"INPUT: [{cls.__name__}][{meth_name}]\n"
@@ -206,6 +322,7 @@ class MethodLogger:
                     output_msg = f"OUTPUT: [{cls.__name__}][{meth_name}]\n"
                     output_msg += f"Return: {result}\n"
                     output_msg += f"Time: {duration}"
+                    output_msg = logger.simplify_logging_message(output_msg)
                     logger._print_log(output_msg, is_input=False)
                     
                     # Si era un trigger, decrementar profundidad
@@ -221,7 +338,7 @@ class MethodLogger:
             setattr(cls, method_name, make_wrapper(original_method, method_name))
         
         return cls
-    
+
     def log_function(self, func):
         """Decorador que loguea una función cuando se ejecuta.
         

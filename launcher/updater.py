@@ -129,7 +129,8 @@ class Updater:
         
         try:
             with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
-                return response.read()
+                response = response.read()
+                return json.loads(response.decode('utf-8'))
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 raise UpdateError(
@@ -157,12 +158,9 @@ class Updater:
         y compara la versión disponible con la versión actual.
         """
         try:
-            print("updater.py: check_for_updates")
             # Obtener el último release desde GitHub
             release_url = f"{GITHUB_API_BASE}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
-            response = self._make_request(release_url)
-            release_data = json.loads(response.decode('utf-8'))
-            print(f"release_data: {str(release_data != None)}")
+            release_data = self._make_request(release_url)
         except json.JSONDecodeError:
             raise UpdateError("La respuesta de GitHub tiene formato inválido")
         except UpdateError as e:
@@ -190,7 +188,6 @@ class Updater:
         
         # Buscar el asset que coincida con el patrón o nombre del ejecutable
         asset = self._find_asset(assets)
-        print(f"asset: {asset}")
         if not asset:
             raise UpdateError(
                 f"No se encontró un asset compatible en el release. "
@@ -244,7 +241,6 @@ class Updater:
         """
         Busca el asset que coincida con el ejecutable.
         """
-        print(f"updater.py: _find_asset: {str(assets != None)}")
         # Patrones a buscar (en orden de prioridad)
         patterns = [
             f"{ASSET_NAME_PATTERN}.zip",  # Archivo ZIP
@@ -277,7 +273,6 @@ class Updater:
         """
         Compara si other_version es más nueva que current_version.
         """
-        print(f"updater.py: _is_newer_version: {self.current_version} vs {other_version}")
         # Si no hay versión instalada, cualquier versión disponible es más nueva
         if self.current_version is None:
             return True
@@ -327,7 +322,7 @@ class Updater:
         
         # Nombre del archivo descargado
         download_path = self.temp_dir / info.name
-        print(f"updater.py: download_update: download_path: {download_path}")
+
         # Descargar con reintentos
         last_error = None
         for attempt in range(MAX_DOWNLOAD_RETRIES):
@@ -356,7 +351,6 @@ class Updater:
         Descarga un archivo desde GitHub Releases con reporte de progreso.
         Usa la API de GitHub directamente para descargar assets.
         """
-        print(f"updater.py: _download_file: url: {url}, destination: {destination}, expected_size: {expected_size}")
 
         headers = {
             "User-Agent": USER_AGENT,
@@ -406,8 +400,6 @@ class Updater:
                             self.progress_callback(downloaded, total_size)
         
         except urllib.error.HTTPError as e:
-            print(f"updater.py: _download_file: Error HTTP {e.code} descargando archivo desde GitHub")
-            print(f"updater.py: _download_file: URL: {url}")
             if hasattr(e, 'headers'):
                 print(f"updater.py: _download_file: Headers respuesta: {dict(e.headers)}")
             
@@ -422,10 +414,8 @@ class Updater:
                 error_msg += f": {e.reason}"
             raise UpdateError(error_msg)
         except urllib.error.URLError as e:
-            print(f"updater.py: _download_file: Error de conexión: {e.reason}")
             raise UpdateError(f"Error de conexión: {e.reason}")
         except IOError as e:
-            print(f"updater.py: _download_file: Error escribiendo archivo: {e}")
             raise UpdateError(f"Error escribiendo archivo: {e}")
     
     def _verify_checksum(self, file_path: Path, checksum_str: str) -> bool:
@@ -450,16 +440,11 @@ class Updater:
             
             if algorithm.lower() != 'sha256':
                 # Solo soportamos SHA256 por ahora
-                print(f"updater.py: _verify_checksum: Solo soportamos SHA256 por ahora")
-                print(f"updater.py: _verify_checksum: algorithm: {algorithm}")
-                print(f"updater.py: _verify_checksum: expected_hash: {expected_hash}")
                 return True
             else:
-                print(f"updater.py: _verify_checksum: verify_checksum: {verify_checksum(file_path, expected_hash)}")
                 return verify_checksum(file_path, expected_hash)
         except Exception as e:
             # Si hay error verificando, asumir que está bien
-            print(f"updater.py: _verify_checksum: Exception: {e}")
             return True
 
     def apply_update(self, backup: bool = True) -> bool:
@@ -481,7 +466,6 @@ class Updater:
         Raises:
             UpdateError: Si la actualización falla
         """
-        print(f"updater.py: apply_update: {str(self.downloaded_file != None)}")
         if not self.downloaded_file or not self.downloaded_file.exists():
             raise UpdateError("No hay archivo descargado para aplicar")
         
@@ -489,7 +473,6 @@ class Updater:
             raise UpdateError("No hay información de actualización")
         
         # Cerrar la aplicación si está corriendo
-        print(f"updater.py: apply_update: 3")
 
         if is_process_running(APP_EXECUTABLE):
             if not kill_process(APP_EXECUTABLE):
@@ -498,15 +481,12 @@ class Updater:
                     "Por favor ciérralo manualmente e intenta de nuevo."
                 )
         app_path = get_app_compressed_path(file_name=self.update_info.name)
-        print(f"updater.py: apply_update: {str(app_path != None)}")
         # Hacer backup
         backup_path = None
-        print(f"updater.py: apply_update: app_path.exists(): {app_path.exists()}")
         if backup and app_path.exists():
             backup_path = app_path.with_suffix('.exe.bak')
             if not safe_rename(app_path, backup_path):
                 raise UpdateError("No se pudo crear backup del ejecutable actual")
-        print(f"updater.py: apply_update: {str(app_path != None)}")
         # Aplicar actualización
         try:
             # Crear directorio de destino si no existe
@@ -518,7 +498,6 @@ class Updater:
                 if backup_path and backup_path.exists():
                     safe_rename(backup_path, app_path)
                 raise UpdateError("No se pudo instalar la nueva versión")
-            print(f"updater.py: apply_update: 5 {str(backup_path != None)}")
             # Lo que tenemos en app_path es un ZIP: necesitamos descomprimirlo en el mismo directorio que app_path
             import zipfile
 
@@ -535,7 +514,7 @@ class Updater:
             if backup_path and backup_path.exists():
                 safe_rename(backup_path, app_path)
             raise UpdateError(f"Error aplicando actualización: {e}")
-    
+
     def _update_version_file(self) -> None:
         """
         Actualiza el archivo version.json con la nueva versión.
