@@ -38,7 +38,31 @@ from resources.config import get_launcher_dir
 # INFORMACIÓN DE LA APLICACIÓN
 # ============================================================================
 
-__version__ = "0.0.0"
+__version__ = "0.1.2"
+
+# Notas de release (changelog) para esta versión
+# Este texto aparecerá en el release de GitHub
+"""
+EJEMPLO PARA USAR EN CHANGELOG:
+## Cambios en v0.1.2
+
+### Nuevas características
+- Mejoras en el sistema de actualización
+- Nueva interfaz de usuario
+
+### Correcciones
+- Corrección de bugs menores
+- Optimizaciones de rendimiento
+
+### Notas
+- Actualización recomendada para todos los usuarios
+"""
+__changelog__ = """
+## Cambios en v0.1.2
+
+- Mejoras en el sistema de actualización
+- Corrección de bugs menores
+"""
 
 APP_NAME = "POS"
 APP_FULL_NAME = "Launcher del Sistema de Punto de Venta"
