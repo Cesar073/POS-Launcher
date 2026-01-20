@@ -1,6 +1,6 @@
 NECESARIO V1:
 [X] 1. Reparar Error de self.after(0, lambda: self._on_update_error(str(e)))
-[ ] 2. El laucher se abre 2 veces.
+[X] 2. El laucher se abre 2 veces.
 [ ] 3.  Manejo de backup:
 [ ]     - El laucher debe poder ofrecerle al usuario que vuelva a la versión anterior si existe.
 [ ]     - Si no app anterior, no hacemos nada.

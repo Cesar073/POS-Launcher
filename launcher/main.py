@@ -137,7 +137,6 @@ def main():
         print(f"Error fatal en launcher: {e}")
         import traceback
         traceback.print_exc()
-    finally:
         # Intentar iniciar la app de todas formas
         start_pos_application()
 
