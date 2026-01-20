@@ -44,7 +44,7 @@ __version__ = "0.1.2"
 # Este texto aparecerá en el release de GitHub
 """
 EJEMPLO PARA USAR EN CHANGELOG:
-## Cambios en v0.1.2
+## Cambios en v0.1.3
 
 ### Nuevas características
 - Mejoras en el sistema de actualización
@@ -58,10 +58,10 @@ EJEMPLO PARA USAR EN CHANGELOG:
 - Actualización recomendada para todos los usuarios
 """
 __changelog__ = """
-## Cambios en v0.1.2
+## Cambios en v0.1.3
 
-- Mejoras en el sistema de actualización
-- Corrección de bugs menores
+### Nuevas características
+- Se agrega copyright al launcher
 """
 
 APP_NAME = "POS"
