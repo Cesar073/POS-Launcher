@@ -104,7 +104,7 @@ def parse_checksums_file(content: str) -> dict:
 # ============================================================================
 
 
-def get_pos_base_dir() -> Path:
+def get_pos_base_dir_windows() -> Path:
     csidl_local_appdata = 0x001C
     buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
     ctypes.windll.shell32.SHGetFolderPathW(

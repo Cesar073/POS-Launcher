@@ -21,11 +21,11 @@ from updater import Updater, UpdateError
 from resources.config import (
     get_app_executable_path,
 )
-from resources.utils import start_application, get_pos_base_dir
+from resources.utils import start_application, get_pos_base_dir_windows
 from ui import LauncherUI
 
 
-POS_BASE_DIR = get_pos_base_dir()
+POS_BASE_DIR = get_pos_base_dir_windows()
 
 
 def get_installed_version_of_pos() -> str | None:
