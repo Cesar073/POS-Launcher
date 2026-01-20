@@ -38,7 +38,7 @@ from resources.config import get_launcher_dir
 # INFORMACIÓN DE LA APLICACIÓN
 # ============================================================================
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 
 # Notas de release (changelog) para esta versión
