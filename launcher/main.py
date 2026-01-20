@@ -59,23 +59,6 @@ def start_pos_application() -> None:
         #input("Presiona Enter para cerrar...")
 
 
-def show_splash_screen():
-    """
-    Muestra la splash screen.
-    """
-    try:
-        import customtkinter as ctk
-        from ui import SplashScreen
-        root = ctk.CTk()
-        root.withdraw()  # Ocultar ventana principal
-        splash = SplashScreen(root)
-        splash.update()
-        return root, splash
-    except Exception as e:
-        print(f"Error mostrando splash screen: {e}")
-        return None, None
-
-
 def run_launcher():
     """
     Función principal del launcher.
