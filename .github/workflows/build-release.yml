@@ -24,14 +24,15 @@ jobs:
       - name: Clone source repositories
         shell: bash
         run: |
-          git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/Cesar073/POS-Launcher.git launcher
+          mkdir -p src
+          git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/Cesar073/POS-Launcher.git src/launcher
 
           mkdir workspace
           mkdir -p workspace/build
-          cp -r launcher workspace/launcher
+          cp -r src/launcher workspace/launcher
           cp -r build/* workspace/build/
           cp requirements*.txt workspace/
-          cp launcher/main.py workspace/main.py
+          cp src/launcher/main.py workspace/main.py
 
       - uses: actions/setup-python@v5
         with:
