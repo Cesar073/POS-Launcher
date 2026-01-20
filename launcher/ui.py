@@ -24,6 +24,7 @@ from resources.config import (
     ALLOW_SKIP_UPDATE,
 )
 from updater import Updater, UpdateInfo, UpdateError
+from backup_manager import BackupManager, BackupError
 
 
 class LauncherUI(ctk.CTk):
@@ -56,6 +57,9 @@ class LauncherUI(ctk.CTk):
         self.update_info = update_info
         self.check_callback = check_callback
         self.has_backups_available = has_backups_available
+        
+        # Crear instancia de BackupManager si hay backups disponibles
+        self.backup_manager = BackupManager() if has_backups_available else None
         
         self._is_updating = False
         self._is_checking = update_info is None
@@ -499,9 +503,11 @@ class LauncherUI(ctk.CTk):
             self.after(0, self._on_update_success)
         
         except UpdateError as e:
-            self.after(0, lambda: self._on_update_error(str(e)))
+            error_msg = str(e)
+            self.after(0, lambda msg=error_msg: self._on_update_error(msg))
         except Exception as e:
-            self.after(0, lambda: self._on_update_error(f"Error inesperado: {e}"))
+            error_msg = f"Error inesperado: {e}"
+            self.after(0, lambda msg=error_msg: self._on_update_error(msg))
     
     def _on_update_success(self) -> None:
         """Maneja actualización exitosa."""
@@ -563,8 +569,106 @@ class LauncherUI(ctk.CTk):
         if self._is_updating:
             return
         
-        # TODO: Implementar funcionalidad de restauración
-        print("Botón de restaurar versión anterior presionado")
+        if self.backup_manager is None:
+            print("ui.py: ERROR - BackupManager no está inicializado")
+            return
+        
+        self._is_updating = True
+        self._start_restore_ui()
+        
+        # Iniciar downgrade en hilo separado
+        thread = threading.Thread(target=self._restore_backup, daemon=True)
+        thread.start()
+    
+    def _start_restore_ui(self) -> None:
+        """Actualiza la UI para mostrar el progreso de restauración."""
+        # Deshabilitar botones
+        self.update_button.configure(state="disabled")
+        if hasattr(self, 'skip_button'):
+            self.skip_button.configure(state="disabled")
+        if hasattr(self, 'restore_button'):
+            self.restore_button.configure(state="disabled")
+        
+        # Ocultar changelog y mostrar progreso
+        if hasattr(self, 'changelog_text'):
+            self.changelog_text.master.pack_forget()
+        self.progress_frame.pack(fill="x", pady=(0, 15))
+        
+        # Configurar barra de progreso como indeterminada
+        self.progress_bar.configure(mode="indeterminate")
+        self.progress_bar.start()
+        self.status_label.configure(text="Restaurando versión anterior...")
+        self.progress_label.configure(text="")
+    
+    def _restore_backup(self) -> None:
+        """Restaura el backup (ejecuta en hilo separado)."""
+        try:
+            print("ui.py: _restore_backup - Iniciando restauración")
+            self.backup_manager.downgrade()
+            print("ui.py: _restore_backup - Restauración completada exitosamente")
+            
+            # Éxito
+            self.after(0, self._on_restore_success)
+        
+        except BackupError as e:
+            error_msg = str(e)
+            self.after(0, lambda msg=error_msg: self._on_restore_error(msg))
+        except Exception as e:
+            error_msg = f"Error inesperado: {e}"
+            self.after(0, lambda msg=error_msg: self._on_restore_error(msg))
+    
+    def _on_restore_success(self) -> None:
+        """Maneja restauración exitosa."""
+        self.progress_bar.stop()
+        
+        self.status_label.configure(
+            text="✅ ¡Versión anterior restaurada!",
+            text_color=THEME_SUCCESS,
+        )
+        self.progress_label.configure(text="Iniciando aplicación...")
+        
+        # Iniciar la aplicación
+        from resources.utils import start_application
+        from resources.config import get_app_executable_path
+        
+        app_path = get_app_executable_path()
+        if app_path.exists():
+            print("ui.py: _on_restore_success - Iniciando aplicación")
+            start_application(app_path)
+        else:
+            print(f"ui.py: ERROR - No se encontró {app_path}")
+        
+        # Esperar un momento y cerrar
+        self.after(1500, self._finish_restore)
+    
+    def _finish_restore(self) -> None:
+        """Finaliza la restauración y cierra."""
+        self.destroy()
+    
+    def _on_restore_error(self, error_message: str) -> None:
+        """
+        Maneja error durante la restauración.
+        
+        Args:
+            error_message: Mensaje de error
+        """
+        self.progress_bar.stop()
+        self.progress_bar.configure(mode="determinate")
+        self.progress_bar.set(0)
+        
+        self.status_label.configure(
+            text=f"❌ Error: {error_message}",
+            text_color=THEME_ERROR,
+        )
+        self.progress_label.configure(text="")
+        
+        # Rehabilitar botones
+        self._is_updating = False
+        if hasattr(self, 'restore_button'):
+            self.restore_button.configure(state="normal")
+        if hasattr(self, 'skip_button'):
+            self.skip_button.configure(state="normal")
+        self.update_button.configure(state="normal")
     
     def _on_close(self) -> None:
         """Maneja cierre de ventana."""
