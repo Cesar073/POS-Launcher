@@ -1,26 +1,23 @@
-HACIENDO Y HACER
-Se cuelga el laucher, solucionarlo.
-
 NECESARIO V1:
-1. Reparar Error de self.after(0, lambda: self._on_update_error(str(e)))
-2. El laucher se abre 2 veces.
-3.  Manejo de backup:
-    - El laucher debe poder ofrecerle al usuario que vuelva a la versión anterior si existe.
-    - Si no app anterior, no hacemos nada.
-    - Si hay app:
-        + Si no hay carpeta de backup, la creamos.
-        + Limpiamos la carpeta de backup.
-        + Cerramos las app si se está ejecutando.
-        + Cortamos y pegamos el código de la app vieja a backup.
-        + Si hay migraciones de la nueva versión, tenemos que tener un código para hacer rollback, lo agregamos al backup.
-    - Se descarga la app nueva.
-    - Si falla el proceso, se copia y pega de vuelta el código de la app de backup.
-[Conservar siempre esta copia para permitir al usuario hacer rollback]
-4. Los botones de la UI están mal al principio y encima cuando se hace clic en vez de desaparecer toman la forma que esperamos desde el principio
-5. Limpiar código.
-    - Quitar comentarios innecesarios.
-    - Reemplazar prints importantes por logging.
-    - Ajustar el diagrama.
+[X] 1. Reparar Error de self.after(0, lambda: self._on_update_error(str(e)))
+[ ] 2. El laucher se abre 2 veces.
+[ ] 3.  Manejo de backup:
+[ ]     - El laucher debe poder ofrecerle al usuario que vuelva a la versión anterior si existe.
+[ ]     - Si no app anterior, no hacemos nada.
+[ ]     - Si hay app:
+[ ]         + Si no hay carpeta de backup, la creamos.
+[ ]         + Limpiamos la carpeta de backup.
+[ ]         + Cerramos las app si se está ejecutando.
+[ ]         + Cortamos y pegamos el código de la app vieja a backup.
+[ ]         + Si hay migraciones de la nueva versión, tenemos que tener un código para hacer rollback, lo agregamos al backup.
+[ ]     - Se descarga la app nueva.
+[ ]     - Si falla el proceso, se copia y pega de vuelta el código de la app de backup.
+[ ] [Conservar siempre esta copia para permitir al usuario hacer rollback]
+[ ] 4. Los botones de la UI están mal al principio y encima cuando se hace clic en vez de desaparecer toman la forma que esperamos desde el principio
+[ ] 5. Limpiar código.
+[ ]     - Quitar comentarios innecesarios.
+[ ]     - Reemplazar prints importantes por logging.
+[ ]     - Ajustar el diagrama.
 
 
 VERSIÓN PRE-FINAL:

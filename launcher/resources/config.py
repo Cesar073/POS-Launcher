@@ -3,9 +3,6 @@ Configuración del Launcher.
 
 Este archivo centraliza todas las configuraciones necesarias
 para el sistema de actualización y el launcher.
-
-IMPORTANTE: Antes de distribuir, configurar:
-- VERSION_JSON_URL: URL del archivo version.json en Google Drive
 """
 
 import sys
@@ -37,7 +34,7 @@ else:
 # CONFIGURACIÓN DE GITHUB RELEASES
 # ============================================================================
 
-# Configuración del repositorio de GitHub donde se almacenan los releases
+# Configuración del repositorio
 GITHUB_OWNER = "Cesar073"
 GITHUB_REPO = "POS-Releases"
 
@@ -46,17 +43,14 @@ GITHUB_API_BASE = "https://api.github.com"
 
 # Token de autenticación de GitHub (Personal Access Token)
 # Requerido para repositorios privados. Para repos públicos puede ser None.
-# 
+
 # CÓMO OBTENER UN TOKEN:
 # 1. Ve a GitHub > Settings > Developer settings > Personal access tokens > Tokens (classic)
 # 2. Click en "Generate new token (classic)"
 # 3. Dale un nombre descriptivo
 # 4. Selecciona el scope "repo" (para repos privados) o "public_repo" (para repos públicos)
 # 5. Copia el token generado
-# 
-# IMPORTANTE: No compartas este token públicamente. Guárdalo de forma segura.
-# Puedes usar una variable de entorno GITHUB_TOKEN en lugar de hardcodearlo aquí.
-# El sistema primero intentará usar la variable de entorno, luego este valor.
+# 6. Configura la variable de entorno GITHUB_TOKEN en tu sistema
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
@@ -66,7 +60,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 # - "POS.exe" (nombre exacto del ejecutable)
 # - "POS-Windows" (prefijo del asset)
 # - "POS" (nombre base)
-ASSET_NAME_PATTERN = APP_EXECUTABLE_NAME  # Por defecto usa el nombre de la app
+ASSET_NAME_PATTERN = APP_EXECUTABLE_NAME + "-Windows" # Por defecto usa el nombre de la app
 
 
 # ============================================================================

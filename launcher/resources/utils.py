@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from resources.logging_method import log_function
 
 # ============================================================================
 # CHECKSUMS
@@ -103,7 +104,7 @@ def parse_checksums_file(content: str) -> dict:
 # MANEJO DE ARCHIVOS
 # ============================================================================
 
-
+@log_function
 def get_pos_base_dir_windows() -> Path:
     csidl_local_appdata = 0x001C
     buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
@@ -117,6 +118,7 @@ def get_pos_base_dir_windows() -> Path:
     return Path(buf.value) / "POS"
 
 
+@log_function
 def safe_delete(file_path: Path, max_retries: int = 3, retry_delay: float = 0.5) -> bool:
     """
     Elimina un archivo de forma segura, con reintentos.
@@ -147,6 +149,7 @@ def safe_delete(file_path: Path, max_retries: int = 3, retry_delay: float = 0.5)
     return False
 
 
+@log_function
 def safe_rename(src: Path, dst: Path, max_retries: int = 3, retry_delay: float = 0.5) -> bool:
     """
     Renombra/mueve un archivo de forma segura, con reintentos.
@@ -160,7 +163,6 @@ def safe_rename(src: Path, dst: Path, max_retries: int = 3, retry_delay: float =
     Returns:
         True si se renombró, False si falló
     """
-    print(f"utils.py: safe_rename: src: {src}, dst: {dst}")
     for attempt in range(max_retries):
         try:
             # Eliminar destino si existe
@@ -171,7 +173,6 @@ def safe_rename(src: Path, dst: Path, max_retries: int = 3, retry_delay: float =
             shutil.move(str(src), str(dst))
             return True
         except PermissionError:
-            print(f"utils.py: safe_rename: PermissionError: {attempt}")
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
             else:
@@ -179,10 +180,10 @@ def safe_rename(src: Path, dst: Path, max_retries: int = 3, retry_delay: float =
         except Exception as e:
             print(f"utils.py: safe_rename: Exception: {e}")
             return False
-    print(f"utils.py: safe_rename: False")
     return False
 
 
+@log_function
 def ensure_dir(directory: Path) -> bool:
     """
     Crea un directorio si no existe.
@@ -200,6 +201,7 @@ def ensure_dir(directory: Path) -> bool:
         return False
 
 
+@log_function
 def clean_temp_files(directory: Path, pattern: str = "*") -> int:
     """
     Limpia archivos temporales de un directorio.
@@ -227,6 +229,7 @@ def clean_temp_files(directory: Path, pattern: str = "*") -> int:
 # MANEJO DE PROCESOS
 # ============================================================================
 
+@log_function
 def is_process_running(process_name: str) -> bool:
     """
     Verifica si un proceso está corriendo.
@@ -245,7 +248,6 @@ def is_process_running(process_name: str) -> bool:
                 stderr=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW
             ).decode('utf-8', errors='ignore')
-            print(f"utils.py: is_process_running: output: {output}")
             return process_name.lower() in output.lower()
         except subprocess.SubprocessError:
             return False
@@ -258,6 +260,7 @@ def is_process_running(process_name: str) -> bool:
             return False
 
 
+@log_function
 def kill_process(process_name: str) -> bool:
     """
     Termina un proceso por nombre.
@@ -291,6 +294,7 @@ def kill_process(process_name: str) -> bool:
             return False
 
 
+@log_function
 def start_application(executable_path: Path, wait: bool = False) -> Optional[subprocess.Popen]:
     """
     Inicia una aplicación.
@@ -334,6 +338,7 @@ def start_application(executable_path: Path, wait: bool = False) -> Optional[sub
 # VERSION INFO
 # ============================================================================
 
+@log_function
 def get_file_version_info(executable_path: Path) -> Optional[str]:
     """
     Obtiene la versión de un ejecutable (solo Windows).
@@ -365,6 +370,7 @@ def get_file_version_info(executable_path: Path) -> Optional[str]:
 # DETECCIÓN DE ENTORNO
 # ============================================================================
 
+@log_function
 def is_frozen() -> bool:
     """
     Detecta si el launcher está compilado.

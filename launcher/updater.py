@@ -150,7 +150,7 @@ class Updater:
             raise UpdateError(f"Error de conexión: {e.reason}")
         except TimeoutError:
             raise UpdateError("Timeout: El servidor no respondió a tiempo")
-    
+
     def check_for_updates(self) -> Optional[UpdateInfo]:
         """
         Verifica si hay una actualización disponible.
@@ -241,31 +241,25 @@ class Updater:
         """
         Busca el asset que coincida con el ejecutable.
         """
-        # Patrones a buscar (en orden de prioridad)
+        # Patrones a buscar en Windows (en orden de prioridad)
+        # Se buscarán assets iguales o que contengan alguno de estos patrones
         patterns = [
-            f"{ASSET_NAME_PATTERN}.zip",  # Archivo ZIP
-            f"{ASSET_NAME_PATTERN}.exe",  # Con extensión .exe
-            APP_EXECUTABLE,  # Nombre exacto del ejecutable
-            ASSET_NAME_PATTERN,  # Patrón configurado
+            f"{ASSET_NAME_PATTERN}.zip",
+            f"{ASSET_NAME_PATTERN}.exe",
+            APP_EXECUTABLE,
+            ASSET_NAME_PATTERN,
         ]
         
-        # También buscar assets que contengan el nombre
         for asset in assets:
             asset_name = asset.get("name", "")
             
-            # Buscar coincidencia exacta primero
             for pattern in patterns:
                 if asset_name == pattern:
                     return asset
             
-            # Buscar si el nombre contiene el patrón
             for pattern in patterns:
                 if pattern in asset_name:
                     return asset
-        
-        # Si no se encuentra, retornar el primer asset (fallback)
-        if assets:
-            return assets[0]
         
         return None
     
