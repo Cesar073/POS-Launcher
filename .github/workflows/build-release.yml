@@ -4,9 +4,9 @@ permissions:
   contents: write
 
 on:
-  release:
-    types: [published]
-
+  push:
+    branches:
+      - main
 env:
   PYTHON_VERSION: '3.11'
 
