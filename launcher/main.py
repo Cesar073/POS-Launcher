@@ -110,6 +110,7 @@ def run_launcher():
         updater=updater,
         update_info=None,  # None indica que está buscando
         check_callback=check_for_updates,
+        has_backups_available=has_backups_available,
     )
     
     # Ejecutar loop de la UI (esto bloqueará hasta que se cierre la ventana)

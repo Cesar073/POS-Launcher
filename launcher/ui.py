@@ -38,10 +38,8 @@ class LauncherUI(ctk.CTk):
         self,
         updater: Updater,
         update_info: Optional[UpdateInfo] = None,
-        on_update_complete: Optional[Callable[[], None]] = None,
-        on_skip: Optional[Callable[[], None]] = None,
-        on_start_app: Optional[Callable[[], None]] = None,
         check_callback: Optional[Callable[[], None]] = None,
+        has_backups_available: bool = False,
     ):
         """
         Inicializa la ventana del launcher.
@@ -49,18 +47,13 @@ class LauncherUI(ctk.CTk):
         Args:
             updater: Instancia del Updater
             update_info: Información de la actualización disponible (None si está buscando)
-            on_update_complete: Callback cuando la actualización termina
-            on_skip: Callback cuando el usuario omite la actualización
-            on_start_app: Callback cuando se debe iniciar la app (sin actualización)
             check_callback: Callback para iniciar la búsqueda de actualizaciones (se llamará después del delay)
+            has_backups_available: Indica si hay backups disponibles
         """
         super().__init__()
         
         self.updater = updater
         self.update_info = update_info
-        self.on_update_complete = on_update_complete
-        self.on_skip = on_skip
-        self.on_start_app = on_start_app
         self.check_callback = check_callback
         
         self._is_updating = False
@@ -204,10 +197,7 @@ class LauncherUI(ctk.CTk):
             self._update_changelog()
         else:
             # No hay actualización - iniciar app directamente
-            if self.on_start_app:
-                self.after(500, self._start_app_and_close)  # Esperar 0.5s antes de iniciar
-            else:
-                self.destroy()
+            self.destroy()
     
     def _update_version_info(self) -> None:
         """Actualiza la información de versión en la UI."""
@@ -232,8 +222,6 @@ class LauncherUI(ctk.CTk):
     
     def _start_app_and_close(self) -> None:
         """Inicia la app y cierra la ventana."""
-        if self.on_start_app:
-            self.on_start_app()
         self.destroy()
     
     def _start_checking(self) -> None:
@@ -507,8 +495,6 @@ class LauncherUI(ctk.CTk):
     
     def _finish_update(self) -> None:
         """Finaliza la actualización y cierra."""
-        if self.on_update_complete:
-            self.on_update_complete()
         self.destroy()
     
     def _on_update_error(self, error_message: str) -> None:
@@ -542,8 +528,6 @@ class LauncherUI(ctk.CTk):
         if self._is_updating:
             return
         
-        if self.on_skip:
-            self.on_skip()
         self.destroy()
     
     def _on_close(self) -> None:
@@ -552,8 +536,6 @@ class LauncherUI(ctk.CTk):
             # No permitir cerrar durante actualización
             return
         
-        if self.on_skip:
-            self.on_skip()
         self.destroy()
 
 
