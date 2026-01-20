@@ -318,11 +318,23 @@ class MethodLogger:
                     end_time = datetime.now()
                     duration = end_time - start_time
                     
+                    # Formatear el return correctamente
+                    formatted_result = logger.simplify_logging_message(result)
+                    return_lines = []
+                    if "\n" in formatted_result:
+                        result_lines = formatted_result.split("\n")
+                        return_lines.append(f"Return: {result_lines[0]}")
+                        for line in result_lines[1:]:
+                            return_lines.append(f"    {line}")
+                    else:
+                        return_lines.append(f"Return: {formatted_result}")
+                    
+                    return_str = "\n    ".join(return_lines)
+                    
                     # Log de salida
                     output_msg = f"OUTPUT: [{cls.__name__}][{meth_name}]\n"
-                    output_msg += f"Return: {result}\n"
+                    output_msg += f"{return_str}\n"
                     output_msg += f"Time: {duration}"
-                    output_msg = logger.simplify_logging_message(output_msg)
                     logger._print_log(output_msg, is_input=False)
                     
                     # Si era un trigger, decrementar profundidad
@@ -419,9 +431,22 @@ class MethodLogger:
             end_time = datetime.now()
             duration = end_time - start_time
             
+            # Formatear el return correctamente
+            formatted_result = logger.simplify_logging_message(result)
+            return_lines = []
+            if "\n" in formatted_result:
+                result_lines = formatted_result.split("\n")
+                return_lines.append(f"Return: {result_lines[0]}")
+                for line in result_lines[1:]:
+                    return_lines.append(f"    {line}")
+            else:
+                return_lines.append(f"Return: {formatted_result}")
+            
+            return_str = "\n    ".join(return_lines)
+            
             # Log de salida
             output_msg = f"OUTPUT: [{function_name}]\n"
-            output_msg += f"Return: {result}\n"
+            output_msg += f"{return_str}\n"
             output_msg += f"Time: {duration}"
             logger._print_log(output_msg, is_input=False)
             
