@@ -40,6 +40,7 @@ from resources.config import get_launcher_dir
 
 __version__ = "0.1.2"
 
+
 # Notas de release (changelog) para esta versión
 # Este texto aparecerá en el release de GitHub
 """
