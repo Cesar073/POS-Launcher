@@ -30,7 +30,7 @@ jobs:
           mkdir -p workspace/build
           mkdir -p workspace/launcher
           cp -r POS-Launcher/build/* workspace/build/
-          cp -r POS-Launcher/launcher workspace/launcher
+          cp -r POS-Launcher/launcher/* workspace/launcher/
           cp POS-Launcher/requirements*.txt workspace/
           cp POS-Launcher/launcher/main.py workspace/main.py
 
