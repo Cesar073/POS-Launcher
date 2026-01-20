@@ -20,14 +20,18 @@ import json
 from updater import Updater, UpdateError
 from resources.config import (
     get_app_executable_path,
+    APP_EXECUTABLE_NAME,
+    APP_EXECUTABLE,
 )
 from resources.utils import start_application, get_pos_base_dir_windows
 from ui import LauncherUI
+from resources.logging_method import log_function
 
 
 POS_BASE_DIR = get_pos_base_dir_windows()
 
 
+@log_function
 def get_installed_version_of_pos() -> str | None:
     """
     Obtiene la versión instalada de la aplicación POS.
@@ -44,6 +48,7 @@ def get_installed_version_of_pos() -> str | None:
     return data.get("version") if data else None
 
 
+@log_function
 def start_pos_application() -> None:
     """
     Inicia la aplicación POS principal.
@@ -59,36 +64,33 @@ def start_pos_application() -> None:
         #input("Presiona Enter para cerrar...")
 
 
+@log_function
+def has_backups() -> bool:
+    """
+    Verifica si hay backups disponibles.
+    """
+    if not POS_BASE_DIR.exists():
+        return False
+    
+    backup_dir = POS_BASE_DIR / "backup"
+    if not backup_dir.exists():
+        return False
+    
+    for file in backup_dir.iterdir():
+        if file.is_file() and file.name.startswith(APP_EXECUTABLE_NAME) and file.name.endswith(APP_EXECUTABLE):
+            return True
+    return False
+
+
+@log_function
 def run_launcher():
     """
     Función principal del launcher.
     """
-    # Obtener versión actual
     current_version = get_installed_version_of_pos()
-    if current_version is None:
-        print("No se encontró una versión instalada")
-    else:
-        print(f"Versión instalada: {current_version}")
-    
-    # Crear updater
+    has_backups_available = has_backups()
     updater = Updater(current_version)
 
-    # Variable para controlar si se debe iniciar la app
-    should_start_app = True
-
-    # Callbacks para la UI
-    def on_update_complete():
-        nonlocal should_start_app
-        should_start_app = True
-    
-    def on_skip():
-        nonlocal should_start_app
-        should_start_app = True
-    
-    def on_start_app():
-        nonlocal should_start_app
-        should_start_app = True
-    
     # Función para buscar actualizaciones (se ejecutará después del delay)
     def check_for_updates():
         print("main.py: check_for_updates")
@@ -107,21 +109,15 @@ def run_launcher():
     launcher_ui = LauncherUI(
         updater=updater,
         update_info=None,  # None indica que está buscando
-        on_update_complete=on_update_complete,
-        on_skip=on_skip,
-        on_start_app=on_start_app,
         check_callback=check_for_updates,
     )
     
     # Ejecutar loop de la UI (esto bloqueará hasta que se cierre la ventana)
     # La búsqueda de actualizaciones se iniciará automáticamente después de 0.5 segundos
     launcher_ui.mainloop()
-    
-    # Iniciar la aplicación principal
-    if should_start_app:
-        start_pos_application()
 
 
+@log_function
 def main():
     """
     Punto de entrada principal.
@@ -137,8 +133,9 @@ def main():
         print(f"Error fatal en launcher: {e}")
         import traceback
         traceback.print_exc()
-        # Intentar iniciar la app de todas formas
-        start_pos_application()
+
+    # Independientemente del resultado, iniciar la aplicación
+    start_pos_application()
 
 
 if __name__ == "__main__":
