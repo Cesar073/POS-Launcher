@@ -55,6 +55,7 @@ class LauncherUI(ctk.CTk):
         self.updater = updater
         self.update_info = update_info
         self.check_callback = check_callback
+        self.has_backups_available = has_backups_available
         
         self._is_updating = False
         self._is_checking = update_info is None
@@ -372,6 +373,25 @@ class LauncherUI(ctk.CTk):
             # Forzar actualización del layout
             self.update_idletasks()
         
+        # Botón de restaurar backup (si hay backups disponibles)
+        if self.has_backups_available:
+            self.restore_button = ctk.CTkButton(
+                self.button_frame,
+                text="Restaurar versión anterior",
+                font=ctk.CTkFont(size=13),
+                fg_color="transparent",
+                border_width=1,
+                text_color=("gray70", "gray30"),
+                hover_color=("gray20", "gray80"),
+                command=self._on_restore_clicked,
+                width=180,
+                corner_radius=8,
+            )
+            # Usar ipady (padding interno vertical) para aumentar altura visual
+            self.restore_button.pack(side="left", padx=(0, 10), ipady=35)
+            # Forzar actualización del layout
+            self.update_idletasks()
+        
         # Botón principal: Actualizar
         self.update_button = ctk.CTkButton(
             self.button_frame,
@@ -392,6 +412,10 @@ class LauncherUI(ctk.CTk):
         if hasattr(self, 'skip_button'):
             self.skip_button.pack_forget()
             self.skip_button.pack(side="left", padx=(0, 10), ipady=35)
+        
+        if hasattr(self, 'restore_button'):
+            self.restore_button.pack_forget()
+            self.restore_button.pack(side="left", padx=(0, 10), ipady=35)
         
         if hasattr(self, 'update_button'):
             self.update_button.pack_forget()
@@ -417,6 +441,8 @@ class LauncherUI(ctk.CTk):
         self.update_button.configure(state="disabled")
         if hasattr(self, 'skip_button'):
             self.skip_button.configure(state="disabled")
+        if hasattr(self, 'restore_button'):
+            self.restore_button.configure(state="disabled")
         
         # Ocultar changelog y mostrar progreso
         self.changelog_text.master.pack_forget()
@@ -519,6 +545,8 @@ class LauncherUI(ctk.CTk):
         self.update_button.configure(state="normal", text="Reintentar")
         if hasattr(self, 'skip_button'):
             self.skip_button.configure(state="normal")
+        if hasattr(self, 'restore_button'):
+            self.restore_button.configure(state="normal")
         
         # Limpiar archivos temporales
         self.updater.cleanup()
@@ -529,6 +557,14 @@ class LauncherUI(ctk.CTk):
             return
         
         self.destroy()
+    
+    def _on_restore_clicked(self) -> None:
+        """Maneja clic en botón Restaurar versión anterior."""
+        if self._is_updating:
+            return
+        
+        # TODO: Implementar funcionalidad de restauración
+        print("Botón de restaurar versión anterior presionado")
     
     def _on_close(self) -> None:
         """Maneja cierre de ventana."""

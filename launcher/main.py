@@ -57,11 +57,9 @@ def start_pos_application() -> None:
     app_path = get_app_executable_path()
     
     if app_path.exists():
-        print(f"Iniciando {app_path}...")
         start_application(app_path)
     else:
         print(f"ERROR: No se encontró {app_path}")
-        #input("Presiona Enter para cerrar...")
 
 
 @log_function
@@ -93,7 +91,6 @@ def run_launcher():
 
     # Función para buscar actualizaciones (se ejecutará después del delay)
     def check_for_updates():
-        print("main.py: check_for_updates")
         update_info = None
         try:
             update_info = updater.check_for_updates()
@@ -131,7 +128,6 @@ def main():
         print("\nLauncher cancelado por el usuario")
         sys.exit(0)
     except Exception as e:
-        print(f"Error fatal en launcher: {e}")
         import traceback
         traceback.print_exc()
 
