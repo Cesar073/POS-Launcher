@@ -19,6 +19,11 @@ from typing import Optional
 
 from resources.logging_method import log_function
 
+from resources.config import (
+    APP_EXECUTABLE_NAME,
+    APP_EXECUTABLE,
+)
+
 # ============================================================================
 # CHECKSUMS
 # ============================================================================
@@ -332,6 +337,31 @@ def start_application(executable_path: Path, wait: bool = False) -> Optional[sub
         return process
     except Exception:
         return None
+
+
+# ============================================================================
+# BACKUPS
+# ============================================================================
+
+
+@log_function
+def has_backups() -> bool:
+    """
+    Verifica si hay backups disponibles.
+    Analiza la carpeta de backup para verificar si existe el POS.exe de la versión anterior.
+    """
+    pos_base_dir = get_pos_base_dir_windows()
+    if not pos_base_dir.exists():
+        return False
+    
+    backup_dir = pos_base_dir / "backup"
+    if not backup_dir.exists():
+        return False
+    
+    for file in backup_dir.iterdir():
+        if file.is_file() and file.name.startswith(APP_EXECUTABLE_NAME) and file.name.endswith(APP_EXECUTABLE):
+            return True
+    return False
 
 
 # ============================================================================

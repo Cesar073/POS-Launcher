@@ -23,7 +23,7 @@ from resources.config import (
     APP_EXECUTABLE_NAME,
     APP_EXECUTABLE,
 )
-from resources.utils import start_application, get_pos_base_dir_windows
+from resources.utils import start_application, get_pos_base_dir_windows, has_backups
 from ui import LauncherUI
 from resources.logging_method import log_function
 
@@ -60,24 +60,6 @@ def start_pos_application() -> None:
         start_application(app_path)
     else:
         print(f"ERROR: No se encontró {app_path}")
-
-
-@log_function
-def has_backups() -> bool:
-    """
-    Verifica si hay backups disponibles.
-    """
-    if not POS_BASE_DIR.exists():
-        return False
-    
-    backup_dir = POS_BASE_DIR / "backup"
-    if not backup_dir.exists():
-        return False
-    
-    for file in backup_dir.iterdir():
-        if file.is_file() and file.name.startswith(APP_EXECUTABLE_NAME) and file.name.endswith(APP_EXECUTABLE):
-            return True
-    return False
 
 
 @log_function

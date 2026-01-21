@@ -104,7 +104,7 @@ class Updater:
         
         # Callback para reportar progreso de descarga
         self.progress_callback: Optional[Callable[[int, int], None]] = None
-    
+
     def set_progress_callback(self, callback: Callable[[int, int], None]) -> None:
         """
         Establece un callback para reportar progreso de descarga.

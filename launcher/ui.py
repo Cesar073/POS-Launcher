@@ -5,9 +5,7 @@ Ventana de actualización usando CustomTkinter con:
 - Información de la nueva versión
 - Changelog/notas de la versión
 - Barra de progreso para descarga
-- Botones para actualizar u omitir
-
-El diseño sigue la misma estética que la aplicación POS principal.
+- Botones para actualizar, restaurar versión anterior y omitir
 """
 
 import customtkinter as ctk
@@ -22,17 +20,23 @@ from resources.config import (
     THEME_SUCCESS,
     THEME_ERROR,
     ALLOW_SKIP_UPDATE,
+    get_app_executable_path
 )
 from updater import Updater, UpdateInfo, UpdateError
 from backup_manager import BackupManager, BackupError
 
+from resources.utils import start_application
 
 class LauncherUI(ctk.CTk):
     """
     Ventana principal del launcher.
     
     Muestra información sobre actualizaciones disponibles y
-    permite al usuario actualizar o continuar sin actualizar.
+    permite al usuario:
+    - Actualizar la aplicación
+    - Restaurar la versión anterior
+    - Omitir la actualización (Abre POS.exe sin actualizar)
+    - Cerrar la ventana (Cierra el launcher y abre POS.exe)
     """
     
     def __init__(
@@ -58,8 +62,8 @@ class LauncherUI(ctk.CTk):
         self.check_callback = check_callback
         self.has_backups_available = has_backups_available
         
-        # Crear instancia de BackupManager si hay backups disponibles
-        self.backup_manager = BackupManager() if has_backups_available else None
+        # Crear instancia de BackupManager (siempre disponible)
+        self.backup_manager = BackupManager()
         
         self._is_updating = False
         self._is_checking = update_info is None
@@ -441,12 +445,12 @@ class LauncherUI(ctk.CTk):
     
     def _start_update_ui(self) -> None:
         """Actualiza la UI para mostrar el progreso."""
-        # Deshabilitar botones
-        self.update_button.configure(state="disabled")
+        # Ocultar botones
         if hasattr(self, 'skip_button'):
-            self.skip_button.configure(state="disabled")
+            self.skip_button.pack_forget()
         if hasattr(self, 'restore_button'):
-            self.restore_button.configure(state="disabled")
+            self.restore_button.pack_forget()
+        self.update_button.pack_forget()
         
         # Ocultar changelog y mostrar progreso
         self.changelog_text.master.pack_forget()
@@ -485,19 +489,34 @@ class LauncherUI(ctk.CTk):
     def _download_and_apply(self) -> None:
         """Descarga y aplica la actualización (ejecuta en hilo separado)."""
         try:
+            # Crear backup si hay una versión instalada
+            if self.updater.current_version is not None:
+                self.after(0, lambda: self.status_label.configure(text="Creando backup de la versión actual..."))
+                self.after(0, lambda: self.progress_bar.configure(mode="indeterminate"))
+                self.after(0, lambda: self.progress_bar.start())
+                
+                try:
+                    self.backup_manager.create_backup()
+                    # Detener la barra antes de continuar
+                    self.after(0, lambda: self.progress_bar.stop())
+                except BackupError as e:
+                    # Si falla el backup, continuar con la actualización pero mostrar advertencia
+                    print(f"ui.py: Advertencia - No se pudo crear backup: {e}")
+                    self.after(0, lambda: self.progress_bar.stop())
+                    # Continuar con la actualización de todas formas
+            
             # Descargar
             self.after(0, lambda: self.status_label.configure(text="Descargando actualización..."))
+            self.after(0, lambda: self.progress_bar.configure(mode="determinate"))
+            self.after(0, lambda: self.progress_bar.set(0))
             self.updater.download_update()
-            print("ui.py: _download_and_apply: self.updater.download_update: OK")
             
             # Aplicar
             self.after(0, lambda: self.status_label.configure(text="Instalando actualización..."))
             self.after(0, lambda: self.progress_bar.configure(mode="indeterminate"))
             self.after(0, lambda: self.progress_bar.start())
-            print("ui.py: _download_and_apply: self.updater.apply_update: Pre-OK")
             
             self.updater.apply_update()
-            print("ui.py: _download_and_apply: self.updater.apply_update: Post-OK")
             
             # Éxito
             self.after(0, self._on_update_success)
@@ -546,13 +565,19 @@ class LauncherUI(ctk.CTk):
         )
         self.progress_label.configure(text="")
         
-        # Rehabilitar botones
+        # Ocultar progreso y mostrar changelog de nuevo
+        self.progress_frame.pack_forget()
+        if hasattr(self, 'changelog_text'):
+            self.changelog_text.master.pack(fill="both", expand=True, pady=(0, 15))
+        
+        # Volver a mostrar y rehabilitar botones
         self._is_updating = False
-        self.update_button.configure(state="normal", text="Reintentar")
         if hasattr(self, 'skip_button'):
-            self.skip_button.configure(state="normal")
+            self.skip_button.pack(side="left", padx=(0, 10), ipady=35)
         if hasattr(self, 'restore_button'):
-            self.restore_button.configure(state="normal")
+            self.restore_button.pack(side="left", padx=(0, 10), ipady=35)
+        self.update_button.configure(text="Reintentar")
+        self.update_button.pack(side="right", ipady=35)
         
         # Limpiar archivos temporales
         self.updater.cleanup()
@@ -569,10 +594,6 @@ class LauncherUI(ctk.CTk):
         if self._is_updating:
             return
         
-        if self.backup_manager is None:
-            print("ui.py: ERROR - BackupManager no está inicializado")
-            return
-        
         self._is_updating = True
         self._start_restore_ui()
         
@@ -582,12 +603,12 @@ class LauncherUI(ctk.CTk):
     
     def _start_restore_ui(self) -> None:
         """Actualiza la UI para mostrar el progreso de restauración."""
-        # Deshabilitar botones
-        self.update_button.configure(state="disabled")
+        # Ocultar botones
         if hasattr(self, 'skip_button'):
-            self.skip_button.configure(state="disabled")
+            self.skip_button.pack_forget()
         if hasattr(self, 'restore_button'):
-            self.restore_button.configure(state="disabled")
+            self.restore_button.pack_forget()
+        self.update_button.pack_forget()
         
         # Ocultar changelog y mostrar progreso
         if hasattr(self, 'changelog_text'):
@@ -603,10 +624,10 @@ class LauncherUI(ctk.CTk):
     def _restore_backup(self) -> None:
         """Restaura el backup (ejecuta en hilo separado)."""
         try:
-            print("ui.py: _restore_backup - Iniciando restauración")
-            self.backup_manager.downgrade()
-            print("ui.py: _restore_backup - Restauración completada exitosamente")
-            
+            status_downgrade = self.backup_manager.downgrade()
+            if not status_downgrade:
+                raise BackupError("No se pudo restaurar la versión anterior")
+
             # Éxito
             self.after(0, self._on_restore_success)
         
@@ -627,16 +648,12 @@ class LauncherUI(ctk.CTk):
         )
         self.progress_label.configure(text="Iniciando aplicación...")
         
-        # Iniciar la aplicación
-        from resources.utils import start_application
-        from resources.config import get_app_executable_path
-        
+        # Iniciar la aplicación        
         app_path = get_app_executable_path()
         if app_path.exists():
-            print("ui.py: _on_restore_success - Iniciando aplicación")
             start_application(app_path)
         else:
-            print(f"ui.py: ERROR - No se encontró {app_path}")
+            raise BackupError(f"No se encontró {app_path}")
         
         # Esperar un momento y cerrar
         self.after(1500, self._finish_restore)
@@ -662,13 +679,18 @@ class LauncherUI(ctk.CTk):
         )
         self.progress_label.configure(text="")
         
-        # Rehabilitar botones
+        # Ocultar progreso y mostrar changelog de nuevo
+        self.progress_frame.pack_forget()
+        if hasattr(self, 'changelog_text'):
+            self.changelog_text.master.pack(fill="both", expand=True, pady=(0, 15))
+        
+        # Volver a mostrar y rehabilitar botones
         self._is_updating = False
-        if hasattr(self, 'restore_button'):
-            self.restore_button.configure(state="normal")
         if hasattr(self, 'skip_button'):
-            self.skip_button.configure(state="normal")
-        self.update_button.configure(state="normal")
+            self.skip_button.pack(side="left", padx=(0, 10), ipady=35)
+        if hasattr(self, 'restore_button'):
+            self.restore_button.pack(side="left", padx=(0, 10), ipady=35)
+        self.update_button.pack(side="right", ipady=35)
     
     def _on_close(self) -> None:
         """Maneja cierre de ventana."""
@@ -676,58 +698,4 @@ class LauncherUI(ctk.CTk):
             # No permitir cerrar durante actualización
             return
         
-        self.destroy()
-
-
-class SplashScreen(ctk.CTkToplevel):
-    """
-    Ventana splash que se muestra mientras se verifica actualizaciones.
-    """
-    
-    def __init__(self, parent: Optional[ctk.CTk] = None):
-        """Inicializa la splash screen."""
-        super().__init__(parent)
-        
-        self.title("")
-        self.geometry("300x150")
-        self.resizable(False, False)
-        self.overrideredirect(True)  # Sin bordes de ventana
-        
-        # Centrar
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 300) // 2
-        y = (self.winfo_screenheight() - 150) // 2
-        self.geometry(f"+{x}+{y}")
-        
-        # Contenido
-        frame = ctk.CTkFrame(self)
-        frame.pack(fill="both", expand=True, padx=2, pady=2)
-        
-        ctk.CTkLabel(
-            frame,
-            text="Sistema POS",
-            font=ctk.CTkFont(size=20, weight="bold"),
-        ).pack(pady=(25, 10))
-        
-        self.status_label = ctk.CTkLabel(
-            frame,
-            text="Verificando actualizaciones...",
-            font=ctk.CTkFont(size=12),
-            text_color="gray",
-        )
-        self.status_label.pack()
-        
-        # Barra de progreso indeterminada
-        self.progress = ctk.CTkProgressBar(frame, mode="indeterminate", width=200)
-        self.progress.pack(pady=(15, 0))
-        self.progress.start()
-    
-    def set_status(self, text: str) -> None:
-        """Actualiza el texto de estado."""
-        self.status_label.configure(text=text)
-        self.update()
-    
-    def close(self) -> None:
-        """Cierra la splash screen."""
-        self.progress.stop()
         self.destroy()
