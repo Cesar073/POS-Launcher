@@ -382,7 +382,7 @@ class LauncherUI(ctk.CTk):
                 text_color=("gray70", "gray30"),
                 hover_color=("gray20", "gray80"),
                 command=self._on_skip_clicked,
-                width=140,
+                width=150,  # Aumentado de 140 a 150 para que el texto no se corte
                 height=40,
                 corner_radius=8,
             )
@@ -400,7 +400,7 @@ class LauncherUI(ctk.CTk):
                 text_color=("gray70", "gray30"),
                 hover_color=("gray20", "gray80"),
                 command=self._on_restore_clicked,
-                width=180,
+                width=170,  # Reducido de 180 a 170 para balancear el espacio
                 height=40,
                 corner_radius=8,
             )
@@ -415,7 +415,7 @@ class LauncherUI(ctk.CTk):
             fg_color=THEME_PRIMARY,
             hover_color="#1557b0",
             command=self._on_update_clicked,
-            width=160,
+            width=150,  # Reducido de 160 a 150 para balancear el espacio
             height=40,
             corner_radius=8,
         )
