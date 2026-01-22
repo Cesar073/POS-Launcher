@@ -38,7 +38,7 @@ from resources.config import get_launcher_dir
 # INFORMACIÓN DE LA APLICACIÓN
 # ============================================================================
 
-__version__ = "0.1.3"
+__version__ = "0.2.0"
 
 
 # Notas de release (changelog) para esta versión
@@ -59,18 +59,23 @@ EJEMPLO PARA USAR EN CHANGELOG:
 - Actualización recomendada para todos los usuarios
 """
 __changelog__ = """
-## Cambios en v0.1.3
+## Cambios en v0.2.0
 
 ### Nuevas características
+- Se agrega la opción de restaurar la versión anterior
 - Se agrega copyright al launcher
+
+### Correcciones
+- Se corrige el error de que el launcher se abría 2 veces
+- Se corrige la UI de la ventana de actualización
 """
 
 APP_NAME = "POS"
 APP_FULL_NAME = "Launcher del Sistema de Punto de Venta"
 APP_DESCRIPTION = "Software de gestion para puntos de venta"
-APP_AUTHOR = ""
-APP_WEBSITE = ""
-APP_SUPPORT_EMAIL = ""
+APP_AUTHOR = "Baby Cesar"
+APP_WEBSITE = "https://github.com/Cesar073"
+APP_SUPPORT_EMAIL = "cesarbaby@gmail.com"
 
 # Año de inicio del proyecto (para copyright)
 APP_COPYRIGHT_YEAR_START = 2026
@@ -306,4 +311,3 @@ def needs_version_file_update() -> bool:
     """
     installed = get_installed_version()
     return installed != __version__
-
