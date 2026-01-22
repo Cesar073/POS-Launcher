@@ -43,7 +43,6 @@ class BackupManager:
     - create_backup(): Crea un backup de la aplicación actual
     - downgrade(): Restaura la versión anterior desde el backup
     """
-    
     def __init__(self):
         """Inicializa el gestor de backups."""
         self.pos_base_dir = get_pos_base_dir_windows()
@@ -82,7 +81,7 @@ class BackupManager:
             raise BackupError("No se pudo copiar el contenido a la carpeta de backup")
         
         return True
-    
+
     def downgrade(self) -> bool:
         """
         Restaura la versión anterior desde el backup.
@@ -146,7 +145,7 @@ class BackupManager:
             except Exception as e:
                 raise BackupError(f"Error eliminando {item.name}: {e}")
         return True
-    
+
     def _copy_pos_to_backup(self) -> bool:
         """
         Copia todo el contenido desde la carpeta principal de POS a la carpeta backup.
@@ -176,7 +175,7 @@ class BackupManager:
                 raise BackupError(f"Error copiando {item.name} al backup: {e}")
         
         return True
-    
+
     def _copy_backup_to_pos(self) -> bool:
         """
         Copia todo el contenido desde la carpeta backup a la carpeta principal de POS.
@@ -208,7 +207,7 @@ class BackupManager:
                 raise BackupError(f"Error copiando {item.name}: {e}")
         
         return True
-    
+
     def _clean_backup_directory(self) -> bool:
         """
         Limpia todo el contenido de la carpeta de backup.
@@ -231,4 +230,3 @@ class BackupManager:
                 raise BackupError(error_msg)
         
         return True
-        

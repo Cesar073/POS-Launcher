@@ -79,13 +79,7 @@ def get_launcher_dir() -> Path:
 
 def get_app_executable_path() -> Path:
     """
-    Retorna la ruta al ejecutable principal de la aplicación.
-    
-    En desarrollo, busca en dist/POS/
-    En producción, busca en el mismo directorio que el launcher
-    
-    Returns:
-        Path al ejecutable POS.exe
+    Retorna la ruta al ejecutable principal de la aplicación (POS.exe).
     """
     launcher_dir = get_launcher_dir()
     

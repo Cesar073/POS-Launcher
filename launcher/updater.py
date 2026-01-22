@@ -26,15 +26,17 @@ Uso:
         # Aplicar
         updater.apply_update()
 """
-
+import os
+import sys
 import json
 import urllib.request
 import urllib.error
 import ssl
-import sys
+import zipfile
 from pathlib import Path
 from typing import Optional, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from resources.logging_method import log_simple_class_methods
 
 from resources.config import (
@@ -51,7 +53,6 @@ from resources.config import (
     RETRY_DELAY,
     APP_EXECUTABLE,
     get_temp_download_dir,
-    get_app_compressed_path,
 )
 from resources.utils import (
     verify_checksum,
@@ -60,6 +61,7 @@ from resources.utils import (
     ensure_dir,
     is_process_running,
     kill_process,
+    get_pos_base_dir_windows,
 )
 
 
@@ -89,7 +91,7 @@ class Updater:
     Maneja la verificación, descarga y aplicación de actualizaciones
     desde GitHub Releases.
     """
-    
+
     def __init__(self, current_version: str | None = None):
         """
         Inicializa el updater.
@@ -236,7 +238,7 @@ class Updater:
         )
         
         return self.update_info
-    
+
     def _find_asset(self, assets: list) -> Optional[dict]:
         """
         Busca el asset que coincida con el ejecutable.
@@ -262,7 +264,7 @@ class Updater:
                     return asset
         
         return None
-    
+
     def _is_newer_version(self, other_version: str) -> bool:
         """
         Compara si other_version es más nueva que current_version.
@@ -277,7 +279,7 @@ class Updater:
             return other > current
         except (ValueError, AttributeError):
             return False
-    
+
     def _parse_version(self, version_str: str) -> tuple:
         """
         Convierte string de versión a tupla comparable.
@@ -302,7 +304,7 @@ class Updater:
             parts.extend(['0'] * (3 - len(parts)))
         
         return tuple(int(p) for p in parts[:3])
-    
+
     def download_update(self, update_info: Optional[UpdateInfo] = None) -> Path:
         """
         Descarga la actualización.
@@ -329,6 +331,7 @@ class Updater:
                     import time
                     time.sleep(RETRY_DELAY)
         else:
+            safe_delete(download_path)
             raise UpdateError(f"Descarga fallida después de {MAX_DOWNLOAD_RETRIES} intentos: {last_error}")
         
         # Verificar checksum si está disponible
@@ -411,7 +414,7 @@ class Updater:
             raise UpdateError(f"Error de conexión: {e.reason}")
         except IOError as e:
             raise UpdateError(f"Error escribiendo archivo: {e}")
-    
+
     def _verify_checksum(self, file_path: Path, checksum_str: str) -> bool:
         """
         Verifica el checksum del archivo descargado.
@@ -441,25 +444,17 @@ class Updater:
             # Si hay error verificando, asumir que está bien
             return True
 
-    def apply_update(self, backup: bool = True) -> bool:
+    def apply_update(self) -> bool:
         """
         Aplica la actualización descargada.
+        Las Excepciones que puedan ocurrir detienen el proceso y son atrapadas por la UI.
         
         Este método:
         1. Cierra la aplicación si está corriendo
-        2. Hace backup del ejecutable actual (opcional)
-        3. Reemplaza el ejecutable con el nuevo
-        4. Actualiza version.json
-        
-        Args:
-            backup: Si True, hace backup antes de reemplazar
-        
-        Returns:
-            True si la actualización se aplicó correctamente
-        
-        Raises:
-            UpdateError: Si la actualización falla
+        2. Carga los archivos descargados en la carpeta de la app
+        3. Actualiza version.json
         """
+        # Validaciones
         if not self.downloaded_file or not self.downloaded_file.exists():
             raise UpdateError("No hay archivo descargado para aplicar")
         
@@ -467,113 +462,53 @@ class Updater:
             raise UpdateError("No hay información de actualización")
         
         # Cerrar la aplicación si está corriendo
-
         if is_process_running(APP_EXECUTABLE):
             if not kill_process(APP_EXECUTABLE):
                 raise UpdateError(
                     f"No se pudo cerrar {APP_EXECUTABLE}. "
                     "Por favor ciérralo manualmente e intenta de nuevo."
                 )
-        app_path = get_app_compressed_path(file_name=self.update_info.name)
-        # Hacer backup
-        backup_path = None
-        if backup and app_path.exists():
-            backup_path = app_path.with_suffix('.exe.bak')
-            if not safe_rename(app_path, backup_path):
-                raise UpdateError("No se pudo crear backup del ejecutable actual")
-        # Aplicar actualización
-        try:
-            # Crear directorio de destino si no existe
-            app_dir = app_path.parent
-            if not app_dir.exists():
-                app_dir.mkdir(parents=True, exist_ok=True)
-            if not safe_rename(self.downloaded_file, app_path):
-                # Restaurar backup si existe
-                if backup_path and backup_path.exists():
-                    safe_rename(backup_path, app_path)
-                raise UpdateError("No se pudo instalar la nueva versión")
-            # Lo que tenemos en app_path es un ZIP: necesitamos descomprimirlo en el mismo directorio que app_path
-            import zipfile
 
-            with zipfile.ZipFile(app_path, 'r') as zip_ref:
-                zip_ref.extractall(app_path.parent)
-            
-            # Actualizar version.json local
-            self._update_version_file()
-            
-            return True
+        app_dir = get_pos_base_dir_windows()
+        if not app_dir.exists():
+            app_dir.mkdir(parents=True, exist_ok=True)
+
+        app_path = app_dir / self.update_info.name
+        if not safe_rename(src=self.downloaded_file, dst=app_path):
+            raise UpdateError("Error al intentar mover el archivo comprimido a la carpeta de la app")
+
+        # Lo que tenemos en app_path es un ZIP: necesitamos descomprimirlo en el mismo directorio que app_path
+        with zipfile.ZipFile(app_path, 'r') as zip_ref:
+            zip_ref.extractall(app_path.parent)
         
-        except Exception as e:
-            # Intentar rollback
-            if backup_path and backup_path.exists():
-                safe_rename(backup_path, app_path)
-            raise UpdateError(f"Error aplicando actualización: {e}")
+        # Actualizar version.json local
+        self._update_version_file(app_dir)
 
-    def _update_version_file(self) -> None:
+    def _update_version_file(self, pos_base_dir: Path) -> None:
         """
-        Actualiza el archivo version.json con la nueva versión.
+        Actualiza el campo udated_at del archivo version.json.
         """
         if not self.update_info:
             return
         
         try:
-            # Intentar importar desde pos_core
-            sys.path.insert(0, str(Path(__file__).parent.parent))
-            from pos_core.core.resources.paths import get_version_file_path, ensure_directories_exist
-            
-            ensure_directories_exist()
-            version_file = get_version_file_path()
-            
-            from datetime import datetime
-            
-            # Leer datos existentes
-            existing_data = {}
-            if version_file.exists():
-                try:
-                    with open(version_file, 'r', encoding='utf-8') as f:
-                        existing_data = json.load(f)
-                except (json.JSONDecodeError, IOError):
-                    pass
-            
-            # Actualizar con nueva versión
+            if sys.platform == "win32":
+                version_file = pos_base_dir / "version.json"
+            else:
+                version_file = Path.home() / ".local" / "share" / "POS" / "version.json"
+
             now = datetime.now().isoformat()
-            existing_data.update({
+            
+            data = {
                 "version": self.update_info.version,
                 "app_name": "POS",
-                "installed_at": existing_data.get("installed_at", now),
                 "updated_at": now,
-            })
+            }
             
-            # Guardar
-            version_file.parent.mkdir(parents=True, exist_ok=True)
             with open(version_file, 'w', encoding='utf-8') as f:
-                json.dump(existing_data, f, indent=2, ensure_ascii=False)
-        
-        except ImportError:
-            # Si no podemos importar pos_core, guardar en ubicación por defecto
-            try:
-                import os
-                if sys.platform == "win32":
-                    appdata = os.environ.get("APPDATA", "")
-                    version_file = Path(appdata) / "POS" / "version.json"
-                else:
-                    version_file = Path.home() / ".local" / "share" / "POS" / "version.json"
-                
-                version_file.parent.mkdir(parents=True, exist_ok=True)
-                
-                from datetime import datetime
-                now = datetime.now().isoformat()
-                
-                data = {
-                    "version": self.update_info.version,
-                    "app_name": "POS",
-                    "updated_at": now,
-                }
-                
-                with open(version_file, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
-            except Exception:
-                pass  # Silenciar errores
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass  # Silenciar errores
     
     def cleanup(self) -> None:
         """

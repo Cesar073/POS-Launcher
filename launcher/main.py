@@ -19,8 +19,6 @@ import json
 
 from updater import Updater, UpdateError
 from resources.config import (
-    get_app_executable_path,
-    APP_EXECUTABLE_NAME,
     APP_EXECUTABLE,
 )
 from resources.utils import start_application, get_pos_base_dir_windows, has_backups
@@ -54,7 +52,7 @@ def start_pos_application() -> None:
     Inicia la aplicación POS principal.
     """
     
-    app_path = get_app_executable_path()
+    app_path = POS_BASE_DIR / "POS" / APP_EXECUTABLE
     
     if app_path.exists():
         start_application(app_path)
@@ -89,7 +87,7 @@ def run_launcher():
         updater=updater,
         update_info=None,  # None indica que está buscando
         check_callback=check_for_updates,
-        has_backups_available=True,
+        has_backups_available=has_backups_available,
     )
     
     # Ejecutar loop de la UI (esto bloqueará hasta que se cierre la ventana)

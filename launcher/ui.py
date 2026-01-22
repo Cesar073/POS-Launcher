@@ -483,6 +483,7 @@ class LauncherUI(ctk.CTk):
     
     def _download_and_apply(self) -> None:
         """Descarga y aplica la actualización (ejecuta en hilo separado)."""
+        backup_created = False
         try:
             # Crear backup si hay una versión instalada
             if self.updater.current_version is not None:
@@ -496,9 +497,7 @@ class LauncherUI(ctk.CTk):
                     self.after(0, lambda: self.progress_bar.stop())
                 except BackupError as e:
                     # Si falla el backup, continuar con la actualización pero mostrar advertencia
-                    print(f"ui.py: Advertencia - No se pudo crear backup: {e}")
                     self.after(0, lambda: self.progress_bar.stop())
-                    # Continuar con la actualización de todas formas
             
             # Descargar
             self.after(0, lambda: self.status_label.configure(text="Descargando actualización..."))
@@ -510,16 +509,22 @@ class LauncherUI(ctk.CTk):
             self.after(0, lambda: self.status_label.configure(text="Instalando actualización..."))
             self.after(0, lambda: self.progress_bar.configure(mode="indeterminate"))
             self.after(0, lambda: self.progress_bar.start())
-            
+
+            # Crear backup
+            try:
+                backup_created = self.backup_manager.create_backup()
+            except BackupError as e:
+                pass
+
+            # Aplicar actualización
             self.updater.apply_update()
-            
+
             # Éxito
             self.after(0, self._on_update_success)
         
-        except UpdateError as e:
-            error_msg = str(e)
-            self.after(0, lambda msg=error_msg: self._on_update_error(msg))
         except Exception as e:
+            if backup_created:
+                self.backup_manager.downgrade()
             error_msg = f"Error inesperado: {e}"
             self.after(0, lambda msg=error_msg: self._on_update_error(msg))
     
