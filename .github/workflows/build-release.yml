@@ -27,12 +27,11 @@ jobs:
           git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/Cesar073/POS-Launcher.git
 
           mkdir workspace
-          mkdir -p workspace/build
-          mkdir -p workspace/launcher
+          mkdir workspace/build
+          mkdir workspace/launcher
           cp -r POS-Launcher/build/* workspace/build/
           cp -r POS-Launcher/launcher/* workspace/launcher/
           cp POS-Launcher/requirements*.txt workspace/
-          cp POS-Launcher/launcher/main.py workspace/main.py
 
       - name: Read version and changelog from code
         id: get_version
