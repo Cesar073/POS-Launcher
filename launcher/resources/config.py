@@ -142,7 +142,7 @@ RETRY_DELAY = 3
 
 # Tamaño de la ventana del launcher
 WINDOW_WIDTH = 500
-WINDOW_HEIGHT = 400
+WINDOW_HEIGHT = 450
 
 # Título de la ventana
 WINDOW_TITLE = "Actualizador POS"

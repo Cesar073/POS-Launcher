@@ -360,7 +360,16 @@ class LauncherUI(ctk.CTk):
     def _create_buttons(self) -> None:
         """Crea los botones de acción."""
         self.button_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.button_frame.pack(fill="x", pady=(10, 0))  # Más espacio arriba
+        # Aumentar padding vertical para que los botones no se corten
+        self.button_frame.pack(fill="x", pady=(10, 10))
+        
+        # Configurar grid del frame
+        # Configuramos hasta 3 columnas: 0 y 1 para botones secundarios, 2 para botón principal
+        self.button_frame.grid_columnconfigure(0, weight=1)  # Columna izquierda (botones secundarios)
+        self.button_frame.grid_columnconfigure(1, weight=0)  # Columna media (botones secundarios)
+        self.button_frame.grid_columnconfigure(2, weight=0)  # Columna derecha (botón actualizar)
+        
+        column = 0
         
         # Botón secundario: Omitir (si está permitido)
         if ALLOW_SKIP_UPDATE:
@@ -374,12 +383,11 @@ class LauncherUI(ctk.CTk):
                 hover_color=("gray20", "gray80"),
                 command=self._on_skip_clicked,
                 width=140,
+                height=40,
                 corner_radius=8,
             )
-            # Usar ipady (padding interno vertical) para aumentar altura visual
-            self.skip_button.pack(side="left", padx=(0, 10), ipady=35)
-            # Forzar actualización del layout
-            self.update_idletasks()
+            self.skip_button.grid(row=0, column=column, padx=(0, 10), pady=(10, 10), sticky="w")
+            column += 1
         
         # Botón de restaurar backup (si hay backups disponibles)
         if self.has_backups_available:
@@ -393,12 +401,11 @@ class LauncherUI(ctk.CTk):
                 hover_color=("gray20", "gray80"),
                 command=self._on_restore_clicked,
                 width=180,
+                height=40,
                 corner_radius=8,
             )
-            # Usar ipady (padding interno vertical) para aumentar altura visual
-            self.restore_button.pack(side="left", padx=(0, 10), ipady=35)
-            # Forzar actualización del layout
-            self.update_idletasks()
+            self.restore_button.grid(row=0, column=column, padx=(0, 10), pady=(10, 10), sticky="w")
+            column += 1
         
         # Botón principal: Actualizar
         self.update_button = ctk.CTkButton(
@@ -409,26 +416,14 @@ class LauncherUI(ctk.CTk):
             hover_color="#1557b0",
             command=self._on_update_clicked,
             width=160,
+            height=40,
             corner_radius=8,
         )
-        # Usar ipady (padding interno vertical) para aumentar altura visual
-        self.update_button.pack(side="right", ipady=35)
+        self.update_button.grid(row=0, column=2, padx=0, pady=(10, 10), sticky="e")
     
     def _apply_button_sizing(self) -> None:
         """Re-aplica el tamaño de los botones para asegurar que se vean correctamente."""
-        # Re-empaquetar botones con ipady para forzar el tamaño
-        if hasattr(self, 'skip_button'):
-            self.skip_button.pack_forget()
-            self.skip_button.pack(side="left", padx=(0, 10), ipady=35)
-        
-        if hasattr(self, 'restore_button'):
-            self.restore_button.pack_forget()
-            self.restore_button.pack(side="left", padx=(0, 10), ipady=35)
-        
-        if hasattr(self, 'update_button'):
-            self.update_button.pack_forget()
-            self.update_button.pack(side="right", ipady=35)
-        
+        # Con grid no necesitamos re-aplicar, pero podemos forzar actualización
         self.update_idletasks()
     
     def _on_update_clicked(self) -> None:
@@ -447,10 +442,10 @@ class LauncherUI(ctk.CTk):
         """Actualiza la UI para mostrar el progreso."""
         # Ocultar botones
         if hasattr(self, 'skip_button'):
-            self.skip_button.pack_forget()
+            self.skip_button.grid_remove()
         if hasattr(self, 'restore_button'):
-            self.restore_button.pack_forget()
-        self.update_button.pack_forget()
+            self.restore_button.grid_remove()
+        self.update_button.grid_remove()
         
         # Ocultar changelog y mostrar progreso
         self.changelog_text.master.pack_forget()
@@ -572,12 +567,15 @@ class LauncherUI(ctk.CTk):
         
         # Volver a mostrar y rehabilitar botones
         self._is_updating = False
+        column = 0
         if hasattr(self, 'skip_button'):
-            self.skip_button.pack(side="left", padx=(0, 10), ipady=35)
+            self.skip_button.grid(row=0, column=column, padx=(0, 10), pady=(10, 10), sticky="w")
+            column += 1
         if hasattr(self, 'restore_button'):
-            self.restore_button.pack(side="left", padx=(0, 10), ipady=35)
+            self.restore_button.grid(row=0, column=column, padx=(0, 10), pady=(10, 10), sticky="w")
+            column += 1
         self.update_button.configure(text="Reintentar")
-        self.update_button.pack(side="right", ipady=35)
+        self.update_button.grid(row=0, column=2, padx=0, pady=(10, 10), sticky="e")
         
         # Limpiar archivos temporales
         self.updater.cleanup()
@@ -605,10 +603,10 @@ class LauncherUI(ctk.CTk):
         """Actualiza la UI para mostrar el progreso de restauración."""
         # Ocultar botones
         if hasattr(self, 'skip_button'):
-            self.skip_button.pack_forget()
+            self.skip_button.grid_remove()
         if hasattr(self, 'restore_button'):
-            self.restore_button.pack_forget()
-        self.update_button.pack_forget()
+            self.restore_button.grid_remove()
+        self.update_button.grid_remove()
         
         # Ocultar changelog y mostrar progreso
         if hasattr(self, 'changelog_text'):
@@ -620,7 +618,7 @@ class LauncherUI(ctk.CTk):
         self.progress_bar.start()
         self.status_label.configure(text="Restaurando versión anterior...")
         self.progress_label.configure(text="")
-    
+
     def _restore_backup(self) -> None:
         """Restaura el backup (ejecuta en hilo separado)."""
         try:
@@ -686,11 +684,14 @@ class LauncherUI(ctk.CTk):
         
         # Volver a mostrar y rehabilitar botones
         self._is_updating = False
+        column = 0
         if hasattr(self, 'skip_button'):
-            self.skip_button.pack(side="left", padx=(0, 10), ipady=35)
+            self.skip_button.grid(row=0, column=column, padx=(0, 10), pady=(10, 10), sticky="w")
+            column += 1
         if hasattr(self, 'restore_button'):
-            self.restore_button.pack(side="left", padx=(0, 10), ipady=35)
-        self.update_button.pack(side="right", ipady=35)
+            self.restore_button.grid(row=0, column=column, padx=(0, 10), pady=(10, 10), sticky="w")
+            column += 1
+        self.update_button.grid(row=0, column=2, padx=0, pady=(10, 10), sticky="e")
     
     def _on_close(self) -> None:
         """Maneja cierre de ventana."""
