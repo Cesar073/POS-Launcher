@@ -80,7 +80,7 @@ class LauncherUI(ctk.CTk):
         # Si está en modo "buscando", configurar UI inicial
         if self._is_checking:
             self._show_checking_state()
-            # Programar la búsqueda de actualizaciones después de 0.5 segundos
+            # Programar la búsqueda de actualizaciones después de 1.5 segundos
             if self.check_callback:
                 self.after(1500, self._start_checking)
     

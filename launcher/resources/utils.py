@@ -111,6 +111,16 @@ def parse_checksums_file(content: str) -> dict:
 
 @log_function
 def get_pos_base_dir_windows() -> Path:
+    """Devuelve la ruta base de la aplicación POS en el directorio de usuario.
+    C:\Users\<usuario>\AppData\Local\POS
+    
+    CSIDL_LOCAL_APPDATA = 0x001C
+    Es una constante definida en la API de Windows y representa:
+    C:\Users\<usuario>\AppData\Local
+
+    Returns:
+        Path al directorio base de la aplicación POS
+    """
     csidl_local_appdata = 0x001C
     buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
     ctypes.windll.shell32.SHGetFolderPathW(

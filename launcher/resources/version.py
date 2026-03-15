@@ -67,7 +67,9 @@ __changelog__ = """
 
 APP_NAME = "POS"
 APP_FULL_NAME = "Launcher del Sistema de Punto de Venta"
-APP_DESCRIPTION = "Software de gestion para puntos de venta"
+# Le agregue un 1 para diferenciarlo del archivo build. Uno de estos se ven en
+# el Administrador de Tareas.
+APP_DESCRIPTION = "Sistema POS1"
 APP_AUTHOR = "Baby Cesar"
 APP_WEBSITE = "https://github.com/Cesar073"
 APP_SUPPORT_EMAIL = "cesarbaby@gmail.com"

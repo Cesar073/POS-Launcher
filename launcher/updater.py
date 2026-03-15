@@ -44,6 +44,7 @@ from resources.config import (
     GITHUB_REPO,
     GITHUB_API_BASE,
     GITHUB_TOKEN,
+    CHECK_RELEASE_CANDIDATE_ONLY,
     ASSET_NAME_PATTERN,
     HTTP_TIMEOUT,
     DOWNLOAD_TIMEOUT,
@@ -153,22 +154,53 @@ class Updater:
         except TimeoutError:
             raise UpdateError("Timeout: El servidor no respondió a tiempo")
 
+    def _get_release_to_check(self) -> dict:
+        """
+        Obtiene el release contra el que verificar actualizaciones.
+        Si CHECK_RELEASE_CANDIDATE_ONLY es True, devuelve el último release
+        marcado como prerelease (release candidate). Si no, el último release estable.
+        """
+        if CHECK_RELEASE_CANDIDATE_ONLY:
+            # Listar releases y quedarnos con el último que sea prerelease (release candidate)
+            list_url = (
+                f"{GITHUB_API_BASE}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
+                "?per_page=100"
+            )
+            try:
+                releases = self._make_request(list_url)
+            except (json.JSONDecodeError, UpdateError) as e:
+                if isinstance(e, UpdateError) and ("404" in str(e) or "No se encontró" in str(e)):
+                    raise UpdateError("No se encontró el repositorio o no hay releases")
+                raise
+            if not isinstance(releases, list):
+                raise UpdateError("La respuesta de GitHub no es una lista de releases")
+            for r in releases:
+                if r.get("prerelease") is True:
+                    return r
+            raise UpdateError(
+                "No se encontró ningún release candidate (prerelease) en el repositorio"
+            )
+        # Comportamiento original: último release estable
+        release_url = f"{GITHUB_API_BASE}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+        try:
+            return self._make_request(release_url)
+        except UpdateError as e:
+            if "404" in str(e) or "No se encontró" in str(e):
+                raise UpdateError("No se encontró ningún release en el repositorio")
+            raise
+
     def check_for_updates(self) -> Optional[UpdateInfo]:
         """
         Verifica si hay una actualización disponible.
-        Consulta la API de GitHub para obtener el último release
-        y compara la versión disponible con la versión actual.
+        Consulta la API de GitHub para obtener el último release (estable o
+        release-candidate según configuración) y compara con la versión actual.
         """
         try:
-            # Obtener el último release desde GitHub
-            release_url = f"{GITHUB_API_BASE}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
-            release_data = self._make_request(release_url)
+            release_data = self._get_release_to_check()
         except json.JSONDecodeError:
             raise UpdateError("La respuesta de GitHub tiene formato inválido")
         except UpdateError as e:
             print(f"Error saliendo por UpdateError: {e}")
-            if "404" in str(e) or "No se encontró" in str(e):
-                raise UpdateError("No se encontró ningún release en el repositorio")
             raise
         
         # Obtener versión del tag del release (puede tener 'v' al inicio)
@@ -481,6 +513,22 @@ class Updater:
         with zipfile.ZipFile(app_path, 'r') as zip_ref:
             zip_ref.extractall(app_path.parent)
         
+        # Eliminar el archivo ZIP
+        safe_delete(app_path)
+
+        # Renombramos la carpeta descomprimida a POS
+        new_app_path = app_path.parent / "POS"
+        if not safe_rename(src=app_path.parent / app_path.name, dst=new_app_path):
+            raise UpdateError("Error al intentar mover la carpeta descomprimida a la carpeta de la app")
+        
+        # Buscamos el archivo executable en new_app_path y lo renombramos a POS
+        if sys.platform == "win32":
+            executable_path = new_app_path / "POS-Windows.exe"
+        else:
+            executable_path = new_app_path / APP_EXECUTABLE
+        if not safe_rename(src=executable_path, dst=app_dir / APP_EXECUTABLE):
+            raise UpdateError("Error al intentar mover el archivo executable a la carpeta de la app")
+
         # Actualizar version.json local
         self._update_version_file(app_dir)
 

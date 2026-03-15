@@ -22,6 +22,7 @@ NECESARIO V1:
 
 VERSIÓN PRE-FINAL:
 - Seguimos con windows avisando que mi app es desconocida.
+  Ver documentation/FALSO_POSITIVO_ANTIVIRUS.md (Contebrew.A!ml: causa y soluciones: firma, enviar a Microsoft, --onedir).
 - Versión para Raspbian.
 - Versión para Linux Ubuntu.
 - Facilitar la creación de logs y poder pedirle a Fer que me los envíe.

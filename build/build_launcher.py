@@ -65,7 +65,7 @@ def read_version_info():
         "version": "0.0.0",  # Valor genérico, debe leerse de version.py
         "app_name": "POS",
         "app_full_name": "Launcher del Sistema de Punto de Venta",
-        "app_description": "Software de gestion para puntos de venta",
+        "app_description": "Sistema POS2", # Le agregue un 2 para diferenciarlo del archivo version.py. Uno de estos se ven en el Administrador de Tareas.
         "app_author": "",  # Debe leerse de version.py
         "copyright_year_start": 2026,
     }
@@ -291,11 +291,14 @@ def clean_build_artifacts() -> None:
     """Limpia artefactos de compilaciones anteriores del launcher."""
     print_step("Limpiando artefactos anteriores del launcher...")
     
-    # Carpetas a limpiar
+    # Carpetas a limpiar (Nuitka nombra .dist según el script: main.dist por launcher/main.py)
     to_clean = [
         OUTPUT_DIR / f"{OUTPUT_NAME}.dist",
+        OUTPUT_DIR / "main.dist",
         OUTPUT_DIR / f"{OUTPUT_NAME}.build",
+        OUTPUT_DIR / "main.build",
         OUTPUT_DIR / f"{OUTPUT_NAME}.onefile-build",
+        OUTPUT_DIR / "main.onefile-build",
     ]
     
     # Archivos a limpiar
@@ -314,20 +317,27 @@ def clean_build_artifacts() -> None:
             path.unlink()
 
 
-def build_nuitka_command() -> list:
+def build_nuitka_command(use_onefile: bool = None) -> list:
     """
     Construye el comando de Nuitka con todas las opciones.
+    
+    Args:
+        use_onefile: Si True, compila un solo .exe (onefile). Si False, carpeta .dist.
+                     Por defecto usa NUITKA_OPTIONS["onefile"]. Modo onedir puede
+                     reducir falsos positivos de antivirus (ej. Contebrew.A!ml).
     
     Returns:
         Lista con el comando completo
     """
+    if use_onefile is None:
+        use_onefile = NUITKA_OPTIONS.get("onefile", True)
     cmd = [sys.executable, "-m", "nuitka"]
     
     # Opciones básicas
     if NUITKA_OPTIONS.get("standalone"):
         cmd.append("--standalone")
     
-    if NUITKA_OPTIONS.get("onefile"):
+    if use_onefile:
         cmd.append("--onefile")
     
     # Información del ejecutable
@@ -390,9 +400,28 @@ def build_nuitka_command() -> list:
     return cmd
 
 
-def build_launcher() -> bool:
+def _find_onedir_exe(output_dir: Path, output_filename: str) -> Path | None:
+    """
+    Nuitka nombra la carpeta .dist según el script (ej. launcher/main.py -> main.dist).
+    Busca el .exe dentro de cualquier carpeta .dist en output_dir.
+    """
+    for item in output_dir.iterdir():
+        if item.is_dir() and item.suffix == ".dist":
+            exe_candidate = item / output_filename
+            if exe_candidate.exists():
+                return exe_candidate
+            # Por si Nuitka usó el nombre del módulo para el exe (ej. main.exe)
+            for exe in item.glob("*.exe"):
+                return exe
+    return None
+
+
+def build_launcher(use_onefile: bool = True) -> bool:
     """
     Compila el launcher con Nuitka.
+    
+    Args:
+        use_onefile: Si True, un solo .exe (onefile). Si False, carpeta .dist (onedir).
     
     Returns:
         True si la compilación fue exitosa
@@ -408,12 +437,19 @@ def build_launcher() -> bool:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     
     # Construir comando
-    cmd = build_nuitka_command()
+    cmd = build_nuitka_command(use_onefile=use_onefile)
     
     output_filename = f"{OUTPUT_NAME}{PLATFORM_CONFIG['extension']}"
+    if use_onefile:
+        output_path = OUTPUT_DIR / output_filename
+    else:
+        # Nuitka nombra la carpeta según el script (launcher/main.py -> main.dist)
+        output_path = _find_onedir_exe(OUTPUT_DIR, output_filename) or (
+            OUTPUT_DIR / f"{OUTPUT_NAME}.dist" / output_filename
+        )
     print_step("Iniciando compilación con Nuitka...")
     print(f"Script: {LAUNCHER_SCRIPT}")
-    print(f"Salida: {OUTPUT_DIR / output_filename}")
+    print(f"Salida esperada: {OUTPUT_DIR / '<nombre>.dist' / output_filename} (carpeta .dist según nombre del script)")
     print(f"Plataforma: {sys.platform}")
 
     start_time = time.time()
@@ -426,21 +462,35 @@ def build_launcher() -> bool:
     seconds = int(elapsed % 60)
 
     if success:
+        # En onedir, Nuitka crea main.dist (por launcher/main.py), no Launcher_Windows.dist
+        if not use_onefile:
+            output_path = _find_onedir_exe(OUTPUT_DIR, output_filename)
+
         print_header("¡COMPILACIÓN EXITOSA!")
         print(f"Tiempo: {minutes}m {seconds}s")
 
-        # Verificar que se creó el ejecutable
-        exe_path = OUTPUT_DIR / output_filename
-        if exe_path.exists():
-            size_mb = exe_path.stat().st_size / (1024 * 1024)
-            print(f"Ejecutable: {exe_path}")
+        if output_path and output_path.exists():
+            size_mb = output_path.stat().st_size / (1024 * 1024)
+            print(f"Ejecutable: {output_path}")
             print(f"Tamaño: {size_mb:.1f} MB")
+        elif not use_onefile:
+            print("Ejecutable en carpeta .dist (p. ej. dist\\main.dist\\):")
+            for item in sorted(OUTPUT_DIR.iterdir()):
+                if item.is_dir() and item.suffix == ".dist":
+                    for exe in item.glob("*.exe"):
+                        print(f"  {exe}")
 
         print("\nPara probar el launcher:")
-        if PLATFORM_CONFIG["extension"]:
-            print(f"  .\\dist\\{output_filename}")
+        if use_onefile:
+            if PLATFORM_CONFIG["extension"]:
+                print(f"  .\\dist\\{output_filename}")
+            else:
+                print(f"  ./dist/{output_filename}")
         else:
-            print(f"  ./dist/{output_filename}")
+            if output_path and output_path.exists():
+                print(f"  {output_path}")
+            else:
+                print("  .\\dist\\main.dist\\<ejecutable>  (carpeta según nombre del script)")
     else:
         print_header("ERROR EN COMPILACIÓN")
         print("Revisa los mensajes de error arriba.")
@@ -458,6 +508,12 @@ def main():
         action="store_true",
         help="Limpiar artefactos antes de compilar"
     )
+    parser.add_argument(
+        "--onedir",
+        action="store_true",
+        help="Compilar en modo onedir (carpeta .dist con .exe y DLLs) en lugar de onefile. "
+             "Puede reducir falsos positivos de Windows Defender (ej. Contebrew.A!ml)."
+    )
     
     args = parser.parse_args()
     
@@ -465,13 +521,17 @@ def main():
     print(f"Python: {sys.version}")
     print(f"Proyecto: {PROJECT_ROOT}")
     print(f"Plataforma: {sys.platform} (extensión: '{PLATFORM_CONFIG['extension']}')")
+    if args.onedir:
+        print("Modo: onedir (carpeta .dist)")
+    else:
+        print("Modo: onefile (un solo .exe)")
     
     # Limpiar si se solicita
     if args.clean:
         clean_build_artifacts()
     
-    # Compilar
-    success = build_launcher()
+    # Compilar (onedir puede reducir detección por antivirus)
+    success = build_launcher(use_onefile=not args.onedir)
     
     # Código de salida
     sys.exit(0 if success else 1)
