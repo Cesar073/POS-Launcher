@@ -80,6 +80,7 @@ class BackupManager:
         if not status_copy:
             raise BackupError("No se pudo copiar el contenido a la carpeta de backup")
         
+        self.has_backups = True
         return True
 
     def downgrade(self) -> bool:

@@ -192,7 +192,8 @@ PLATFORM_CONFIG = get_platform_config()
 NUITKA_OPTIONS = {
     # Tipo de compilación
     "standalone": True,
-    "onefile": True,  # El launcher es un solo archivo
+    "onefile": False,  # El launcher es un solo archivo
+    "onedir": True,
 
     # Información del ejecutable (solo para Windows)
     "company_name": PLATFORM_CONFIG.get("company_name") or None,
@@ -317,20 +318,20 @@ def clean_build_artifacts() -> None:
             path.unlink()
 
 
-def build_nuitka_command(use_onefile: bool = None) -> list:
+def build_nuitka_command(use_onefile: bool = False, no_compression: bool = False) -> list:
     """
     Construye el comando de Nuitka con todas las opciones.
     
     Args:
         use_onefile: Si True, compila un solo .exe (onefile). Si False, carpeta .dist.
-                     Por defecto usa NUITKA_OPTIONS["onefile"]. Modo onedir puede
-                     reducir falsos positivos de antivirus (ej. Contebrew.A!ml).
+                     Por defecto es False. Modo onedir puede reducir falsos positivos
+                     de antivirus (ej. Contebrew.A!ml).
+        no_compression: Si True, deshabilita compresión en modo onefile para reducir
+                        falsos positivos de antivirus.
     
     Returns:
         Lista con el comando completo
     """
-    if use_onefile is None:
-        use_onefile = NUITKA_OPTIONS.get("onefile", True)
     cmd = [sys.executable, "-m", "nuitka"]
     
     # Opciones básicas
@@ -339,6 +340,10 @@ def build_nuitka_command(use_onefile: bool = None) -> list:
     
     if use_onefile:
         cmd.append("--onefile")
+        if no_compression:
+            cmd.append("--onefile-no-compression")
+    else:
+        cmd.append("--onedir")
     
     # Información del ejecutable
     if NUITKA_OPTIONS.get("company_name"):
@@ -416,12 +421,13 @@ def _find_onedir_exe(output_dir: Path, output_filename: str) -> Path | None:
     return None
 
 
-def build_launcher(use_onefile: bool = True) -> bool:
+def build_launcher(use_onefile: bool = False, no_compression: bool = False) -> bool:
     """
     Compila el launcher con Nuitka.
     
     Args:
         use_onefile: Si True, un solo .exe (onefile). Si False, carpeta .dist (onedir).
+        no_compression: Si True, deshabilita compresión en modo onefile.
     
     Returns:
         True si la compilación fue exitosa
@@ -437,7 +443,7 @@ def build_launcher(use_onefile: bool = True) -> bool:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     
     # Construir comando
-    cmd = build_nuitka_command(use_onefile=use_onefile)
+    cmd = build_nuitka_command(use_onefile=use_onefile, no_compression=no_compression)
     
     output_filename = f"{OUTPUT_NAME}{PLATFORM_CONFIG['extension']}"
     if use_onefile:
@@ -499,7 +505,13 @@ def build_launcher(use_onefile: bool = True) -> bool:
 
 
 def main():
-    """Función principal."""
+    """Función principal.
+    
+    Args:
+        --clean: Limpiar artefactos antes de compilar
+        --onefile: Compilar en modo onefile (un solo .exe). Por defecto es onedir.
+        --no-compression: Deshabilitar compresión en modo onefile. Por defecto es True.
+    """
     parser = argparse.ArgumentParser(
         description="Compila el Launcher POS con Nuitka"
     )
@@ -509,29 +521,38 @@ def main():
         help="Limpiar artefactos antes de compilar"
     )
     parser.add_argument(
-        "--onedir",
+        "--onefile",
         action="store_true",
-        help="Compilar en modo onedir (carpeta .dist con .exe y DLLs) en lugar de onefile. "
-             "Puede reducir falsos positivos de Windows Defender (ej. Contebrew.A!ml)."
+        help="Compilar en modo onefile (un solo .exe) en lugar de onedir. "
+             "Aumenta la posibilidad de falsos positivos de Windows Defender (ej. Contebrew.A!ml)."
+    )
+    parser.add_argument(
+        "--no-compression",
+        action="store_true",
+        help="Deshabilitar compresión en modo onefile. "
+             "Puede reducir falsos positivos de antivirus al evitar patrones similares a packers."
     )
     
     args = parser.parse_args()
-    
+
     print_header("BUILD LAUNCHER POS")
     print(f"Python: {sys.version}")
     print(f"Proyecto: {PROJECT_ROOT}")
     print(f"Plataforma: {sys.platform} (extensión: '{PLATFORM_CONFIG['extension']}')")
-    if args.onedir:
-        print("Modo: onedir (carpeta .dist)")
-    else:
+    if args.onefile:
         print("Modo: onefile (un solo .exe)")
+    else:
+        print("Modo: onedir (carpeta .dist)")
     
     # Limpiar si se solicita
     if args.clean:
         clean_build_artifacts()
     
     # Compilar (onedir puede reducir detección por antivirus)
-    success = build_launcher(use_onefile=not args.onedir)
+    success = build_launcher(
+        use_onefile=args.onefile,
+        no_compression=args.no_compression,
+    )
     
     # Código de salida
     sys.exit(0 if success else 1)

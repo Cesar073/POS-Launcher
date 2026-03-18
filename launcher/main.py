@@ -75,9 +75,9 @@ def run_launcher():
         try:
             update_info = updater.check_for_updates()
         except UpdateError as e:
-            print(f"Error verificando actualizaciones: {e}")
+            print(f"(x001) Error verificando actualizaciones: {e}")
         except Exception as e:
-            print(f"Error verificando actualizaciones: {e}")
+            print(f"(x002) Error verificando actualizaciones: {e}")
         
         # Actualizar la UI con el resultado
         launcher_ui.update_with_result(update_info)

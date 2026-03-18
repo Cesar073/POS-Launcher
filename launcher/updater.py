@@ -511,21 +511,35 @@ class Updater:
 
         # Lo que tenemos en app_path es un ZIP: necesitamos descomprimirlo en el mismo directorio que app_path
         with zipfile.ZipFile(app_path, 'r') as zip_ref:
+            top_level_dirs = {name.split('/')[0] for name in zip_ref.namelist() if '/' in name}
             zip_ref.extractall(app_path.parent)
         
         # Eliminar el archivo ZIP
         safe_delete(app_path)
 
-        # Renombramos la carpeta descomprimida a POS
+        # Determinar el nombre de la carpeta extraída
+        if len(top_level_dirs) == 1:
+            extracted_folder_name = top_level_dirs.pop()
+        else:
+            extracted_folder_name = app_path.stem
+
+        extracted_folder = app_path.parent / extracted_folder_name
         new_app_path = app_path.parent / "POS"
-        if not safe_rename(src=app_path.parent / app_path.name, dst=new_app_path):
-            raise UpdateError("Error al intentar mover la carpeta descomprimida a la carpeta de la app")
+
+        if extracted_folder.exists() and extracted_folder != new_app_path:
+            if not safe_rename(src=extracted_folder, dst=new_app_path):
+                raise UpdateError("Error al intentar mover la carpeta descomprimida a la carpeta de la app")
+        elif not extracted_folder.exists() and not new_app_path.exists():
+            raise UpdateError(
+                f"No se encontró la carpeta extraída '{extracted_folder_name}' en {app_path.parent}"
+            )
         
         # Buscamos el archivo executable en new_app_path y lo renombramos a POS
         if sys.platform == "win32":
-            executable_path = new_app_path / "POS-Windows.exe"
+            executable_path = new_app_path / "POS_Windows.exe"
         else:
             executable_path = new_app_path / APP_EXECUTABLE
+
         if not safe_rename(src=executable_path, dst=app_dir / APP_EXECUTABLE):
             raise UpdateError("Error al intentar mover el archivo executable a la carpeta de la app")
 

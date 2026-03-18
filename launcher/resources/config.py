@@ -56,7 +56,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 # Si es True, el launcher solo busca actualizaciones en releases marcados como
 # "prerelease" (release candidate) en GitHub. Si es False, usa el último release estable.
-CHECK_RELEASE_CANDIDATE_ONLY = os.getenv("CHECK_RELEASE_CANDIDATE_ONLY", "true") == "true"
+CHECK_RELEASE_CANDIDATE_ONLY = os.getenv("CHECK_RELEASE_CANDIDATE_ONLY", "false") == "true"
 
 # Patrón para buscar el asset en los releases
 # El sistema buscará assets que coincidan con este patrón o con el nombre del ejecutable

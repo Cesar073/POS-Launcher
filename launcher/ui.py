@@ -524,7 +524,10 @@ class LauncherUI(ctk.CTk):
         
         except Exception as e:
             if backup_created:
-                self.backup_manager.downgrade()
+                try:
+                    self.backup_manager.downgrade()
+                except Exception:
+                    pass
             error_msg = f"Error inesperado: {e}"
             self.after(0, lambda msg=error_msg: self._on_update_error(msg))
     

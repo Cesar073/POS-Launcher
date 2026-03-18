@@ -111,9 +111,10 @@ def parse_checksums_file(content: str) -> dict:
 
 @log_function
 def get_pos_base_dir_windows() -> Path:
-    """Devuelve la ruta base de la aplicación POS en el directorio de usuario.
-    C:\Users\<usuario>\AppData\Local\POS
-    
+    r"""
+    Devuelve la ruta base de la aplicación POS en el directorio de usuario.
+    Ejemplo: C:\Users\<usuario>\AppData\Local\POS
+
     CSIDL_LOCAL_APPDATA = 0x001C
     Es una constante definida en la API de Windows y representa:
     C:\Users\<usuario>\AppData\Local
@@ -180,11 +181,12 @@ def safe_rename(src: Path, dst: Path, max_retries: int = 3, retry_delay: float =
     """
     for attempt in range(max_retries):
         try:
-            # Eliminar destino si existe
             if dst.exists():
-                dst.unlink()
+                if dst.is_dir():
+                    shutil.rmtree(dst)
+                else:
+                    dst.unlink()
             
-            # Mover archivo
             shutil.move(str(src), str(dst))
             return True
         except PermissionError:
@@ -322,30 +324,66 @@ def start_application(executable_path: Path, wait: bool = False) -> Optional[sub
         Objeto Popen si se inició (y wait=False), None si falló
     """
     if not executable_path.exists():
+        print(f"start_application: El ejecutable no existe: {executable_path}")
         return None
+    
+    work_dir = executable_path.parent
+    
+    # --- DIAGNÓSTICO TEMPORAL: capturar salida de POS.exe ---
+    # TODO: Quitar este diagnóstico temporal.
+    # Lo uso para ver porqué la app no puede iniciar desde el launcher.
+    try:
+        diag = subprocess.run(
+            [str(executable_path)],
+            cwd=str(work_dir),
+            capture_output=True,
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        print(f"start_application [DIAG]: exit_code={diag.returncode}")
+        if diag.stdout:
+            print(f"start_application [DIAG] STDOUT:\n{diag.stdout.decode('utf-8', errors='replace')}")
+        if diag.stderr:
+            print(f"start_application [DIAG] STDERR:\n{diag.stderr.decode('utf-8', errors='replace')}")
+    except subprocess.TimeoutExpired:
+        print("start_application [DIAG]: POS.exe sigue corriendo tras 5s (esto es bueno, no crashea)")
+    except Exception as e:
+        print(f"start_application [DIAG]: Error en diagnóstico: {e}")
+    # --- FIN DIAGNÓSTICO ---
     
     try:
         if sys.platform == "win32":
-            # Windows: usar DETACHED_PROCESS para que no dependa del launcher
             process = subprocess.Popen(
                 [str(executable_path)],
+                cwd=str(work_dir),
                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
                 close_fds=True
             )
         else:
-            # Linux/macOS
             process = subprocess.Popen(
                 [str(executable_path)],
+                cwd=str(work_dir),
                 start_new_session=True,
                 close_fds=True
             )
+        
+        print(f"start_application: Proceso iniciado PID={process.pid}")
+        time.sleep(0.5)
+        
+        exit_code = process.poll()
+        if exit_code is not None:
+            print(f"start_application: El proceso terminó inmediatamente con código {exit_code}")
+            return None
+        
+        print(f"start_application: Proceso corriendo correctamente (PID={process.pid})")
         
         if wait:
             process.wait()
             return None
         
         return process
-    except Exception:
+    except Exception as e:
+        print(f"start_application: Error al iniciar: {e}")
         return None
 
 
