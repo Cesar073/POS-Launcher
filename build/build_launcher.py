@@ -342,8 +342,6 @@ def build_nuitka_command(use_onefile: bool = False, no_compression: bool = False
         cmd.append("--onefile")
         if no_compression:
             cmd.append("--onefile-no-compression")
-    else:
-        cmd.append("--onedir")
     
     # Información del ejecutable
     if NUITKA_OPTIONS.get("company_name"):
