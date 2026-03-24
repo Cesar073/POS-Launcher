@@ -540,7 +540,7 @@ class Updater:
         else:
             executable_path = new_app_path / APP_EXECUTABLE
 
-        if not safe_rename(src=executable_path, dst=app_dir / APP_EXECUTABLE):
+        if not safe_rename(src=executable_path, dst=app_dir / "POS" / APP_EXECUTABLE):
             raise UpdateError("Error al intentar mover el archivo executable a la carpeta de la app")
 
         # Actualizar version.json local

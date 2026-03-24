@@ -112,15 +112,15 @@ def parse_checksums_file(content: str) -> dict:
 @log_function
 def get_pos_base_dir_windows() -> Path:
     r"""
-    Devuelve la ruta base de la aplicación POS en el directorio de usuario.
-    Ejemplo: C:\Users\<usuario>\AppData\Local\POS
+    Devuelve la ruta base de la aplicación NexoPOS en el directorio de usuario.
+    Ejemplo: C:\Users\<usuario>\AppData\Local\NexoPOS
 
     CSIDL_LOCAL_APPDATA = 0x001C
     Es una constante definida en la API de Windows y representa:
-    C:\Users\<usuario>\AppData\Local
+    C:\Users\<usuario>\AppData\Local\NexoPOS
 
     Returns:
-        Path al directorio base de la aplicación POS
+        Path al directorio base de la aplicación NexoPOS
     """
     csidl_local_appdata = 0x001C
     buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
@@ -131,7 +131,7 @@ def get_pos_base_dir_windows() -> Path:
         0,
         buf
     )
-    return Path(buf.value) / "POS"
+    return Path(buf.value) / "NexoPOS"
 
 
 @log_function

@@ -191,7 +191,7 @@ PLATFORM_CONFIG = get_platform_config()
 
 NUITKA_OPTIONS = {
     # Tipo de compilación
-    "standalone": True,
+    "standalone": True, # Evita que se tenga que instalar Python en el sistema para ejecutar el launcher.
     "onefile": False,  # El launcher es un solo archivo
     "onedir": True,
 
