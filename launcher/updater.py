@@ -84,6 +84,51 @@ class UpdateError(Exception):
     pass
 
 
+def is_connectivity_related_failure(exc: BaseException) -> bool:
+    """
+    Indica si el fallo parece de red / DNS / sin Internet (no un bug lógico de la app).
+    """
+    t = str(exc).lower()
+    markers = (
+        "getaddrinfo",
+        "11001",  # Windows: host no encontrado / sin DNS
+        "11002",
+        "name or service not known",
+        "network is unreachable",
+        "no route to host",
+        "error de conexión",
+        "connection timed out",
+        "timed out",
+        "timeout:",
+        "temporarily unavailable",
+        "10060",  # Windows: timeout de conexión
+        "10061",
+        "[errno -2]",  # Linux: name resolution
+        "[errno 101]",  # Network unreachable
+    )
+    return any(m in t for m in markers)
+
+
+def user_message_for_failed_update_check(exc: UpdateError) -> str:
+    """
+    Texto para mostrar en pantalla cuando falla la verificación de actualizaciones.
+    """
+    if is_connectivity_related_failure(exc):
+        return (
+            "No se pudo comprobar si hay actualizaciones.\n\n"
+            "Comprueba tu conexión a Internet y que el firewall o el antivirus no bloqueen "
+            "esta aplicación. Suele ocurrir cuando no hay red, falla el DNS o no se puede "
+            "alcanzar el servidor de actualizaciones.\n\n"
+            "No es un fallo del programa: puedes reintentar la búsqueda o continuar con la "
+            "versión que ya tienes instalada."
+        )
+    return (
+        "No se pudo verificar si hay actualizaciones.\n\n"
+        f"Detalle: {exc}\n\n"
+        "Puedes reintentar más tarde o continuar con la versión instalada."
+    )
+
+
 @log_simple_class_methods
 class Updater:
     """

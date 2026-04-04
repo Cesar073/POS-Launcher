@@ -19,6 +19,7 @@ from resources.config import (
     THEME_PRIMARY,
     THEME_SUCCESS,
     THEME_ERROR,
+    THEME_WARNING,
     ALLOW_SKIP_UPDATE,
     get_app_executable_path
 )
@@ -133,8 +134,9 @@ class LauncherUI(ctk.CTk):
     
     def _create_header(self) -> None:
         """Crea el encabezado con título."""
-        header_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        header_frame.pack(fill="x", pady=(0, 15))
+        self.header_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.header_frame.pack(fill="x", pady=(0, 15))
+        header_frame = self.header_frame
         
         # Ícono o título grande
         self.title_label = ctk.CTkLabel(
@@ -155,7 +157,10 @@ class LauncherUI(ctk.CTk):
     
     def _show_checking_state(self) -> None:
         """Muestra el estado de búsqueda de actualizaciones."""
-        self.title_label.configure(text="🔍 Buscando Actualizaciones...")
+        self.title_label.configure(
+            text="🔍 Buscando Actualizaciones...",
+            text_color=("gray10", "gray90"),
+        )
         self.subtitle_label.configure(
             text="Verificando si hay nuevas versiones disponibles",
             text_color="gray",
@@ -177,12 +182,17 @@ class LauncherUI(ctk.CTk):
             self.status_label.configure(text="Buscando actualizaciones...")
             self.progress_label.configure(text="")
     
-    def update_with_result(self, update_info: Optional[UpdateInfo]) -> None:
+    def update_with_result(
+        self,
+        update_info: Optional[UpdateInfo],
+        check_failed_message: Optional[str] = None,
+    ) -> None:
         """
         Actualiza la UI con el resultado de la búsqueda de actualizaciones.
         
         Args:
             update_info: Información de actualización o None si no hay actualización
+            check_failed_message: Si la verificación falló (red, etc.), texto para el usuario
         """
         self.update_info = update_info
         self._is_checking = False
@@ -194,7 +204,8 @@ class LauncherUI(ctk.CTk):
         
         if update_info:
             # Hay actualización disponible
-            self.title_label.configure(text="🔄 Actualización Disponible")
+            self._hide_check_failed_ui()
+            self.title_label.configure(text="🔄 Actualización Disponible", text_color=("gray10", "gray90"))
             self.subtitle_label.configure(
                 text="Hay una nueva versión del Sistema POS",
                 text_color="gray",
@@ -211,9 +222,100 @@ class LauncherUI(ctk.CTk):
             # Actualizar información de versión
             self._update_version_info()
             self._update_changelog()
+        elif check_failed_message:
+            self._show_check_failed_state(check_failed_message)
         else:
-            # No hay actualización - iniciar app directamente
+            # No hay actualización y la verificación fue correcta — iniciar app directamente
             self.destroy()
+    
+    def _hide_check_failed_ui(self) -> None:
+        """Oculta el bloque de mensaje cuando falló la verificación (p. ej. al reintentar)."""
+        if hasattr(self, "check_fail_frame"):
+            try:
+                self.check_fail_frame.pack_forget()
+            except Exception:
+                pass
+    
+    def _ensure_check_fail_widgets(self) -> None:
+        """Crea una sola vez el área de texto y botones para fallo de verificación."""
+        if hasattr(self, "check_fail_frame"):
+            return
+        self.check_fail_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.check_fail_text = ctk.CTkTextbox(
+            self.check_fail_frame,
+            height=150,
+            font=ctk.CTkFont(size=12),
+            wrap="word",
+        )
+        self.check_fail_text.pack(fill="x", pady=(0, 12))
+        row = ctk.CTkFrame(self.check_fail_frame, fg_color="transparent")
+        row.pack(fill="x")
+        row.grid_columnconfigure(0, weight=1)
+        self.retry_check_button = ctk.CTkButton(
+            row,
+            text="Reintentar",
+            font=ctk.CTkFont(size=13),
+            fg_color="transparent",
+            border_width=1,
+            text_color=("gray70", "gray30"),
+            hover_color=("gray20", "gray80"),
+            command=self._on_retry_check_clicked,
+            width=140,
+            height=40,
+            corner_radius=8,
+        )
+        self.retry_check_button.grid(row=0, column=0, padx=(0, 10), sticky="w")
+        self.continue_after_fail_button = ctk.CTkButton(
+            row,
+            text="Continuar sin actualizar",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=THEME_PRIMARY,
+            hover_color="#1557b0",
+            command=self._on_continue_after_check_fail,
+            width=200,
+            height=40,
+            corner_radius=8,
+        )
+        self.continue_after_fail_button.grid(row=0, column=1, sticky="e")
+    
+    def _show_check_failed_state(self, message: str) -> None:
+        """Muestra aviso cuando no se pudo verificar actualizaciones (red, etc.)."""
+        self._hide_check_failed_ui()
+        if hasattr(self, "version_frame"):
+            self.version_frame.pack_forget()
+        if hasattr(self, "changelog_frame"):
+            self.changelog_frame.pack_forget()
+        if hasattr(self, "button_frame"):
+            self.button_frame.pack_forget()
+        
+        self.title_label.configure(
+            text="No se pudo verificar actualizaciones",
+            text_color=THEME_WARNING,
+        )
+        self.subtitle_label.configure(text="")
+        
+        self._ensure_check_fail_widgets()
+        self.check_fail_text.configure(state="normal")
+        self.check_fail_text.delete("1.0", "end")
+        self.check_fail_text.insert("1.0", message)
+        self.check_fail_text.configure(state="disabled")
+        self.check_fail_frame.pack(fill="x", pady=(0, 10), after=self.header_frame)
+    
+    def _on_retry_check_clicked(self) -> None:
+        """Vuelve a ejecutar la búsqueda de actualizaciones."""
+        if self._is_updating:
+            return
+        self._hide_check_failed_ui()
+        self._is_checking = True
+        self._show_checking_state()
+        if self.check_callback:
+            self.after(400, self.check_callback)
+    
+    def _on_continue_after_check_fail(self) -> None:
+        """Cierra el launcher y deja que el flujo principal abra la app instalada."""
+        if self._is_updating:
+            return
+        self.destroy()
     
     def _update_version_info(self) -> None:
         """Actualiza la información de versión en la UI."""

@@ -18,7 +18,7 @@ import sys
 import json
 import logging
 
-from updater import Updater, UpdateError
+from updater import Updater, UpdateError, user_message_for_failed_update_check
 from resources.config import (
     APP_EXECUTABLE,
     GITHUB_TOKEN,
@@ -79,16 +79,23 @@ def run_launcher():
     # Función para buscar actualizaciones (se ejecutará después del delay)
     def check_for_updates():
         update_info = None
+        check_failed_message = None
         try:
             update_info = updater.check_for_updates()
         except UpdateError as e:
             print(f"(x001) Error verificando actualizaciones: {e}")
             log_exception(e, context="check_for_updates: UpdateError")
+            check_failed_message = user_message_for_failed_update_check(e)
         except Exception as e:
             print(f"(x002) Error verificando actualizaciones: {e}")
             log_exception(e, context="check_for_updates: Exception")
+            check_failed_message = (
+                "No se pudo verificar actualizaciones por un error inesperado.\n\n"
+                "Puedes reintentar o continuar con la versión instalada. "
+                "Si el problema continúa, revisa el archivo de registro del launcher."
+            )
         try:
-            launcher_ui.update_with_result(update_info)
+            launcher_ui.update_with_result(update_info, check_failed_message=check_failed_message)
         except Exception as e:
             log_exception(e, context="check_for_updates: update_with_result")
             raise
