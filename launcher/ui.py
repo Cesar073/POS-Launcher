@@ -26,6 +26,7 @@ from updater import Updater, UpdateInfo, UpdateError
 from backup_manager import BackupManager, BackupError
 
 from resources.utils import start_application
+from resources.exception_logging import log_exception
 
 class LauncherUI(ctk.CTk):
     """
@@ -102,6 +103,12 @@ class LauncherUI(ctk.CTk):
         
         # Manejar cierre de ventana
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def report_callback_exception(self, exc, val, tb):
+        """Tk no muestra excepciones en apps sin consola; las registramos en archivo."""
+        if val is not None:
+            log_exception(val, context="Tkinter/CustomTkinter callback")
+        super().report_callback_exception(exc, val, tb)
     
     def _create_widgets(self) -> None:
         """Crea todos los widgets de la interfaz."""

@@ -16,14 +16,21 @@ Uso:
 
 import sys
 import json
+import logging
 
 from updater import Updater, UpdateError
 from resources.config import (
     APP_EXECUTABLE,
+    GITHUB_TOKEN,
 )
 from resources.utils import start_application, get_pos_base_dir_windows, has_backups
 from ui import LauncherUI
 from resources.logging_method import log_function
+from resources.exception_logging import (
+    install_exception_logging,
+    log_exception,
+    log_message,
+)
 
 
 POS_BASE_DIR = get_pos_base_dir_windows()
@@ -76,11 +83,15 @@ def run_launcher():
             update_info = updater.check_for_updates()
         except UpdateError as e:
             print(f"(x001) Error verificando actualizaciones: {e}")
+            log_exception(e, context="check_for_updates: UpdateError")
         except Exception as e:
             print(f"(x002) Error verificando actualizaciones: {e}")
-        
-        # Actualizar la UI con el resultado
-        launcher_ui.update_with_result(update_info)
+            log_exception(e, context="check_for_updates: Exception")
+        try:
+            launcher_ui.update_with_result(update_info)
+        except Exception as e:
+            log_exception(e, context="check_for_updates: update_with_result")
+            raise
     
     # Mostrar ventana del launcher en modo "buscando"
     launcher_ui = LauncherUI(
@@ -102,6 +113,12 @@ def main():
     
     Maneja excepciones a nivel global para evitar crashes silenciosos.
     """
+    install_exception_logging()
+    log_message(
+        logging.INFO,
+        "Diagnóstico: GITHUB_TOKEN definido en entorno: %s",
+        bool(GITHUB_TOKEN and str(GITHUB_TOKEN).strip()),
+    )
     try:
         run_launcher()
     except KeyboardInterrupt:
@@ -109,10 +126,16 @@ def main():
         sys.exit(0)
     except Exception as e:
         import traceback
+
+        log_exception(e, context="main: run_launcher")
         traceback.print_exc()
 
     # Independientemente del resultado, iniciar la aplicación
-    start_pos_application()
+    try:
+        start_pos_application()
+    except Exception as e:
+        log_exception(e, context="main: start_pos_application")
+        raise
 
 
 if __name__ == "__main__":
