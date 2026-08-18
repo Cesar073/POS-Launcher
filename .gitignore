@@ -26,6 +26,7 @@ Pipfile.lock
 .vscode/
 *.swp
 *.swo
+graphify-out/
 
 # Credenciales (NUNCA commitear)
 credentials.json

@@ -2,36 +2,38 @@
 Sistema de Actualización del POS.
 
 Este módulo contiene la lógica para:
-- Verificar actualizaciones disponibles desde GitHub Releases
+- Verificar actualizaciones disponibles desde el servidor web
 - Descargar nuevas versiones
 - Aplicar actualizaciones
 - Manejar rollback si algo falla
 
-El sistema usa la API de GitHub para obtener información del último release
-y descargar el ejecutable desde los assets del release.
+El sistema usa la API de Efecto Dominó (`/pos/api/updates/...`) autenticada
+con el UUID del cliente POS. El token de GitHub no vive en el cliente.
 
 Uso:
     from launcher.updater import Updater
-    
-    updater = Updater(current_version="0.1.0")
-    
+
+    updater = Updater(current_version="0.1.0", customer_uuid="...")
+
     # Verificar si hay actualización
     update_info = updater.check_for_updates()
     if update_info:
         print(f"Nueva versión disponible: {update_info.version}")
-        
+
         # Descargar
         updater.download_update()
-        
+
         # Aplicar
         updater.apply_update()
 """
-import os
-import sys
 import json
-import urllib.request
-import urllib.error
+import re
 import ssl
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Optional, Callable
@@ -40,16 +42,13 @@ from datetime import datetime
 from resources.logging_method import log_simple_class_methods
 
 from resources.config import (
-    GITHUB_OWNER,
-    GITHUB_REPO,
-    GITHUB_API_BASE,
-    GITHUB_TOKEN,
-    CHECK_RELEASE_CANDIDATE_ONLY,
-    ASSET_NAME_PATTERN,
+    WEB_API_BASE,
+    UPDATES_CHECK_PATH,
+    UPDATES_DOWNLOAD_PATH,
     HTTP_TIMEOUT,
     DOWNLOAD_TIMEOUT,
     DOWNLOAD_CHUNK_SIZE,
-    USER_AGENT,
+    USER_AGENT_PREFIX,
     MAX_DOWNLOAD_RETRIES,
     RETRY_DELAY,
     APP_EXECUTABLE,
@@ -64,6 +63,7 @@ from resources.utils import (
     kill_process,
     get_pos_base_dir_windows,
 )
+from resources.version import get_version as get_launcher_version
 
 
 @dataclass
@@ -81,7 +81,10 @@ class UpdateInfo:
 
 class UpdateError(Exception):
     """Error durante el proceso de actualización."""
-    pass
+
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def is_connectivity_related_failure(exc: BaseException) -> bool:
@@ -113,6 +116,25 @@ def user_message_for_failed_update_check(exc: UpdateError) -> str:
     """
     Texto para mostrar en pantalla cuando falla la verificación de actualizaciones.
     """
+    code = getattr(exc, "status_code", None)
+    if code == 401:
+        return (
+            "No se pudo identificar esta instalación.\n\n"
+            "El identificador del cliente POS es inválido o falta. "
+            "No se descargarán actualizaciones.\n\n"
+            "Podés continuar con la versión que ya tenés instalada."
+        )
+    if code == 403:
+        return (
+            "La cuenta de este cliente POS está inactiva.\n\n"
+            "No se descargarán actualizaciones. "
+            "Podés continuar con la versión instalada."
+        )
+    if code == 404:
+        return (
+            "No hay una actualización disponible en el servidor.\n\n"
+            "Podés continuar con la versión instalada."
+        )
     if is_connectivity_related_failure(exc):
         return (
             "No se pudo comprobar si hay actualizaciones.\n\n"
@@ -129,227 +151,182 @@ def user_message_for_failed_update_check(exc: UpdateError) -> str:
     )
 
 
+def _filename_from_content_disposition(header: str | None, fallback: str) -> str:
+    if not header:
+        return fallback
+    match = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', header, re.IGNORECASE)
+    if not match:
+        return fallback
+    name = match.group(1).strip().strip('"')
+    return name or fallback
+
+
 @log_simple_class_methods
 class Updater:
     """
     Gestor de actualizaciones.
-    
+
     Maneja la verificación, descarga y aplicación de actualizaciones
-    desde GitHub Releases.
+    desde el servidor web de Efecto Dominó.
     """
 
-    def __init__(self, current_version: str | None = None):
+    def __init__(
+        self,
+        current_version: str | None = None,
+        customer_uuid: str | None = None,
+    ):
         """
         Inicializa el updater.
-        
+
         Args:
             current_version: Versión actual instalada o None si no se encuentra instalada.
+            customer_uuid: UUID de PosCustomer (Bearer). Obligatorio para hablar con la API.
         """
         self.current_version = current_version
+        self.customer_uuid = (customer_uuid or "").strip() or None
         self.temp_dir = get_temp_download_dir()
         self.downloaded_file: Optional[Path] = None
         self.update_info: Optional[UpdateInfo] = None
-        
+
         # Callback para reportar progreso de descarga
         self.progress_callback: Optional[Callable[[int, int], None]] = None
 
     def set_progress_callback(self, callback: Callable[[int, int], None]) -> None:
         """
         Establece un callback para reportar progreso de descarga.
-        
+
         Args:
             callback: Función que recibe (bytes_descargados, bytes_totales)
         """
         self.progress_callback = callback
 
-    def _make_request(self, url: str, timeout: int = HTTP_TIMEOUT) -> bytes:
-        """
-        Realiza una petición HTTP GET a la API de GitHub.
-        """
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Accept": "application/vnd.github+json",
+    def _user_agent(self) -> str:
+        return f"{USER_AGENT_PREFIX}/{get_launcher_version()}"
+
+    def _headers(self, *, binary: bool = False) -> dict[str, str]:
+        if not self.customer_uuid:
+            raise UpdateError(
+                "Falta el identificador del cliente POS.",
+                status_code=401,
+            )
+        return {
+            "Authorization": f"Bearer {self.customer_uuid}",
+            "User-Agent": self._user_agent(),
+            "Accept": "application/octet-stream" if binary else "application/json",
         }
-        if GITHUB_TOKEN:
-            headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
-        request = urllib.request.Request(url, headers=headers)
+
+    def _error_detail_from_http(self, error: urllib.error.HTTPError, fallback: str) -> str:
+        try:
+            body = error.read().decode("utf-8", errors="replace")
+            data = json.loads(body)
+            detail = data.get("detail")
+            if isinstance(detail, str) and detail.strip():
+                return detail.strip()
+        except Exception:
+            pass
+        return fallback
+
+    def _make_json_request(self, url: str, timeout: int = HTTP_TIMEOUT) -> dict:
+        """Realiza una petición HTTP GET JSON al servidor web."""
+        request = urllib.request.Request(url, headers=self._headers(binary=False))
         context = ssl.create_default_context()
-        
+
         try:
             with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
-                response = response.read()
-                return json.loads(response.decode('utf-8'))
+                return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 raise UpdateError(
-                    "Error de autenticación. Verifica que el token de GitHub sea válido "
-                    "y tenga permisos para acceder al repositorio."
+                    self._error_detail_from_http(e, "Identificación inválida."),
+                    status_code=401,
                 )
-            elif e.code == 403:
+            if e.code == 403:
                 raise UpdateError(
-                    "Acceso denegado. El token puede no tener permisos suficientes "
-                    "o el repositorio requiere autenticación."
+                    self._error_detail_from_http(e, "Cuenta inactiva."),
+                    status_code=403,
                 )
-            elif e.code == 404:
-                raise UpdateError("No se encontró el repositorio o release")
-            else:
-                raise UpdateError(f"Error HTTP {e.code}: {e.reason}")
+            if e.code == 400:
+                raise UpdateError(
+                    self._error_detail_from_http(e, "Solicitud inválida."),
+                    status_code=400,
+                )
+            if e.code == 404:
+                raise UpdateError("No se encontró la actualización.", status_code=404)
+            raise UpdateError(f"Error HTTP {e.code}: {e.reason}", status_code=e.code)
         except urllib.error.URLError as e:
             raise UpdateError(f"Error de conexión: {e.reason}")
         except TimeoutError:
             raise UpdateError("Timeout: El servidor no respondió a tiempo")
-
-    def _get_release_to_check(self) -> dict:
-        """
-        Obtiene el release contra el que verificar actualizaciones.
-        Si CHECK_RELEASE_CANDIDATE_ONLY es True, devuelve el último release
-        marcado como prerelease (release candidate). Si no, el último release estable.
-        """
-        if CHECK_RELEASE_CANDIDATE_ONLY:
-            # Listar releases y quedarnos con el último que sea prerelease (release candidate)
-            list_url = (
-                f"{GITHUB_API_BASE}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
-                "?per_page=100"
-            )
-            try:
-                releases = self._make_request(list_url)
-            except (json.JSONDecodeError, UpdateError) as e:
-                if isinstance(e, UpdateError) and ("404" in str(e) or "No se encontró" in str(e)):
-                    raise UpdateError("No se encontró el repositorio o no hay releases")
-                raise
-            if not isinstance(releases, list):
-                raise UpdateError("La respuesta de GitHub no es una lista de releases")
-            for r in releases:
-                if r.get("prerelease") is True:
-                    return r
-            raise UpdateError(
-                "No se encontró ningún release candidate (prerelease) en el repositorio"
-            )
-        # Comportamiento original: último release estable
-        release_url = f"{GITHUB_API_BASE}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
-        try:
-            return self._make_request(release_url)
-        except UpdateError as e:
-            if "404" in str(e) or "No se encontró" in str(e):
-                raise UpdateError("No se encontró ningún release en el repositorio")
-            raise
+        except json.JSONDecodeError:
+            raise UpdateError("La respuesta del servidor tiene formato inválido")
 
     def check_for_updates(self) -> Optional[UpdateInfo]:
         """
         Verifica si hay una actualización disponible.
-        Consulta la API de GitHub para obtener el último release (estable o
-        release-candidate según configuración) y compara con la versión actual.
+        Consulta el servidor web y confía en `update_available`.
         """
-        try:
-            release_data = self._get_release_to_check()
-        except json.JSONDecodeError:
-            raise UpdateError("La respuesta de GitHub tiene formato inválido")
-        except UpdateError as e:
-            print(f"Error saliendo por UpdateError: {e}")
-            raise
-        
-        # Obtener versión del tag del release (puede tener 'v' al inicio)
-        tag_name = release_data.get("tag_name", "")
-        if not tag_name:
-            raise UpdateError("El release no tiene tag_name")
-        
-        # Limpiar el tag para obtener la versión (remover 'v' si existe)
-        available_version = tag_name.lstrip('vV')
-        
-        # Comparar versiones
-        if not self._is_newer_version(available_version):
-            return None
-        
-        # Buscar el asset que coincida con el ejecutable
-        assets = release_data.get("assets", [])
-        if not assets:
-            raise UpdateError("El release no tiene assets disponibles")
-        
-        # Buscar el asset que coincida con el patrón o nombre del ejecutable
-        asset = self._find_asset(assets)
-        if not asset:
+        if not self.customer_uuid:
             raise UpdateError(
-                f"No se encontró un asset compatible en el release. "
-                f"Buscando: {ASSET_NAME_PATTERN} o {APP_EXECUTABLE}"
+                "Falta el identificador del cliente POS.",
+                status_code=401,
             )
-        
-        # Obtener URL de descarga del asset usando la API de GitHub
-        # La API es más confiable que browser_download_url que puede requerir cookies/sesión
-        asset_id = asset.get("id")
-        if asset_id:
-            # Usar la API de GitHub para descargar el asset directamente
-            download_url = f"{GITHUB_API_BASE}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/assets/{asset_id}"
-        else:
-            # Fallback a browser_download_url si no hay asset_id
-            download_url = asset.get("browser_download_url", "")
-            if not download_url:
-                raise UpdateError("El asset no tiene URL de descarga ni asset_id")
-        
-        # Obtener información adicional del release
-        changelog = release_data.get("body", "")
-        if not changelog:
-            changelog = "Sin descripción disponible"
-        
-        release_date = release_data.get("published_at", "")
-        if release_date:
-            # Formatear fecha (ISO 8601 a formato más legible)
+
+        url = f"{WEB_API_BASE.rstrip('/')}{UPDATES_CHECK_PATH}"
+        if self.current_version:
+            query = urllib.parse.urlencode({"version": self.current_version.lstrip("vV")})
+            url = f"{url}?{query}"
+
+        release_data = self._make_json_request(url)
+
+        if not isinstance(release_data, dict):
+            raise UpdateError("La respuesta del servidor tiene formato inválido")
+
+        if not release_data.get("update_available"):
+            return None
+
+        available_version = str(release_data.get("version") or "").lstrip("vV")
+        if not available_version:
+            raise UpdateError("El servidor no envió la versión de la actualización")
+
+        download_url = str(release_data.get("download_url") or "").strip()
+        if not download_url:
+            download_url = (
+                f"{WEB_API_BASE.rstrip('/')}"
+                f"{UPDATES_DOWNLOAD_PATH.format(version=available_version)}"
+            )
+
+        changelog = release_data.get("changelog") or "Sin descripción disponible"
+        release_date = release_data.get("release_date") or ""
+        if release_date and "T" in str(release_date):
             try:
-                from datetime import datetime
-                dt = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
+                dt = datetime.fromisoformat(str(release_date).replace("Z", "+00:00"))
                 release_date = dt.strftime("%Y-%m-%d")
             except Exception:
                 pass
-        
-        file_size = asset.get("size", 0)
-        
-        # Crear objeto UpdateInfo
+
+        checksum = release_data.get("checksum") or None
+        if isinstance(checksum, str):
+            checksum = checksum.strip() or None
+
         self.update_info = UpdateInfo(
-            id=asset_id,
-            name=asset.get("name", ""),
+            id=0,
+            name=f"POS-Windows-v{available_version}.zip",
             version=available_version,
             download_url=download_url,
             changelog=changelog,
-            release_date=release_date,
-            file_size=file_size,
-            checksum=None,  # GitHub no proporciona checksum directamente en la API
+            release_date=str(release_date),
+            file_size=int(release_data.get("file_size") or 0),
+            checksum=checksum,
         )
-        
         return self.update_info
-
-    def _find_asset(self, assets: list) -> Optional[dict]:
-        """
-        Busca el asset que coincida con el ejecutable.
-        """
-        # Patrones a buscar en Windows (en orden de prioridad)
-        # Se buscarán assets iguales o que contengan alguno de estos patrones
-        patterns = [
-            f"{ASSET_NAME_PATTERN}.zip",
-            f"{ASSET_NAME_PATTERN}.exe",
-            APP_EXECUTABLE,
-            ASSET_NAME_PATTERN,
-        ]
-        
-        for asset in assets:
-            asset_name = asset.get("name", "")
-            
-            for pattern in patterns:
-                if asset_name == pattern:
-                    return asset
-            
-            for pattern in patterns:
-                if pattern in asset_name:
-                    return asset
-        
-        return None
 
     def _is_newer_version(self, other_version: str) -> bool:
         """
         Compara si other_version es más nueva que current_version.
         """
-        # Si no hay versión instalada, cualquier versión disponible es más nueva
         if self.current_version is None:
             return True
-        
+
         try:
             current = self._parse_version(self.current_version)
             other = self._parse_version(other_version)
@@ -360,26 +337,25 @@ class Updater:
     def _parse_version(self, version_str: str) -> tuple:
         """
         Convierte string de versión a tupla comparable.
-        
+
         Args:
             version_str: Versión como "1.2.3"
-        
+
         Returns:
             Tupla (major, minor, patch)
-        
+
         Raises:
             ValueError: Si la versión no es válida
         """
         if not version_str:
             raise ValueError("Versión vacía")
-        
-        # Limpiar y parsear
-        clean = version_str.strip().lstrip('vV')
-        parts = clean.split('.')
-        
+
+        clean = version_str.strip().lstrip("vV")
+        parts = clean.split(".")
+
         if len(parts) < 3:
-            parts.extend(['0'] * (3 - len(parts)))
-        
+            parts.extend(["0"] * (3 - len(parts)))
+
         return tuple(int(p) for p in parts[:3])
 
     def download_update(self, update_info: Optional[UpdateInfo] = None) -> Path:
@@ -389,104 +365,108 @@ class Updater:
         info = update_info or self.update_info
         if not info:
             raise UpdateError("No hay información de actualización disponible")
-        
-        # Crear directorio temporal
+
         ensure_dir(self.temp_dir)
-        
-        # Nombre del archivo descargado
         download_path = self.temp_dir / info.name
 
-        # Descargar con reintentos
         last_error = None
         for attempt in range(MAX_DOWNLOAD_RETRIES):
             try:
-                self._download_file(info.download_url, download_path, info.file_size)
+                download_path, header_checksum = self._download_file(
+                    info.download_url, download_path, info.file_size
+                )
+                checksum = info.checksum or header_checksum
+                if checksum:
+                    if not self._verify_checksum(download_path, checksum):
+                        safe_delete(download_path)
+                        raise UpdateError(
+                            "Verificación de checksum fallida. El archivo puede estar corrupto."
+                        )
+                    info.checksum = checksum
                 break
             except UpdateError as e:
                 last_error = e
+                if e.status_code in (401, 403, 404):
+                    safe_delete(download_path)
+                    raise
                 if attempt < MAX_DOWNLOAD_RETRIES - 1:
-                    import time
                     time.sleep(RETRY_DELAY)
         else:
             safe_delete(download_path)
-            raise UpdateError(f"Descarga fallida después de {MAX_DOWNLOAD_RETRIES} intentos: {last_error}")
-        
-        # Verificar checksum si está disponible
-        if info.checksum:
-            if not self._verify_checksum(download_path, info.checksum):
-                safe_delete(download_path)
-                raise UpdateError("Verificación de checksum fallida. El archivo puede estar corrupto.")
-        
+            raise UpdateError(
+                f"Descarga fallida después de {MAX_DOWNLOAD_RETRIES} intentos: {last_error}"
+            )
+
         self.downloaded_file = download_path
         return download_path
 
-    def _download_file(self, url: str, destination: Path, expected_size: int = 0) -> None:
+    def _download_file(
+        self, url: str, destination: Path, expected_size: int = 0
+    ) -> tuple[Path, Optional[str]]:
         """
-        Descarga un archivo desde GitHub Releases con reporte de progreso.
-        Usa la API de GitHub directamente para descargar assets.
+        Descarga un archivo ZIP desde el servidor web con reporte de progreso.
+
+        Returns:
+            (ruta final, checksum del header X-Checksum-SHA256 si existe)
         """
+        headers = self._headers(binary=True)
+        headers["Accept-Encoding"] = "identity"
 
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Accept": "application/octet-stream",
-            "Accept-Encoding": "identity",
-        }
-
-        is_api_endpoint = "/releases/assets/" in url
-        if is_api_endpoint:
-            if not GITHUB_TOKEN:
-                raise UpdateError(
-                    "Se requiere un token de GitHub para descargar assets mediante la API. "
-                    "Configura GITHUB_TOKEN en la configuración."
-                )
-            headers["X-GitHub-Api-Version"] = "2022-11-28"
-        
-        if GITHUB_TOKEN:
-            headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
-        
-        # Crear un opener que maneje redirecciones correctamente
-        # La API de GitHub puede redirigir a un CDN, necesitamos seguir esas redirecciones
         opener = urllib.request.build_opener(
             urllib.request.HTTPRedirectHandler(),
-            urllib.request.HTTPSHandler(context=ssl.create_default_context())
+            urllib.request.HTTPSHandler(context=ssl.create_default_context()),
         )
-        
         request = urllib.request.Request(url, headers=headers)
-        
+
         try:
-            # Usar el opener para seguir redirecciones automáticamente
             with opener.open(request, timeout=DOWNLOAD_TIMEOUT) as response:
-                # Obtener tamaño total del archivo
-                total_size = int(response.headers.get('content-length', expected_size))
+                total_size = int(response.headers.get("content-length", expected_size) or 0)
+                header_checksum = response.headers.get("X-Checksum-SHA256") or None
+                filename = _filename_from_content_disposition(
+                    response.headers.get("Content-Disposition"),
+                    destination.name,
+                )
+                filename = Path(filename).name
+                dest = destination
+                if filename and filename != destination.name:
+                    dest = destination.with_name(filename)
+                    if self.update_info:
+                        self.update_info.name = filename
+
                 downloaded = 0
-                
-                with open(destination, 'wb') as f:
+                with open(dest, "wb") as f:
                     while True:
                         chunk = response.read(DOWNLOAD_CHUNK_SIZE)
                         if not chunk:
                             break
-                        
                         f.write(chunk)
                         downloaded += len(chunk)
-                        
-                        # Reportar progreso
                         if self.progress_callback:
                             self.progress_callback(downloaded, total_size)
-        
+
+                if header_checksum:
+                    header_checksum = header_checksum.strip()
+                    if header_checksum and not header_checksum.lower().startswith("sha256:"):
+                        header_checksum = f"sha256:{header_checksum}"
+                return dest, header_checksum or None
+
         except urllib.error.HTTPError as e:
-            if hasattr(e, 'headers'):
-                print(f"updater.py: _download_file: Headers respuesta: {dict(e.headers)}")
-            
-            error_msg = f"Error HTTP {e.code} descargando archivo desde GitHub"
             if e.code == 401:
-                error_msg += ". Error de autenticación. Verifica que el token de GitHub sea válido."
-            elif e.code == 403:
-                error_msg += ". Acceso denegado. El token puede no tener permisos suficientes."
-            elif e.code == 404:
-                error_msg += ". El asset no se encontró. Verifica que el asset_id sea correcto y que el archivo exista en el release."
-            else:
-                error_msg += f": {e.reason}"
-            raise UpdateError(error_msg)
+                raise UpdateError(
+                    self._error_detail_from_http(e, "Identificación inválida."),
+                    status_code=401,
+                )
+            if e.code == 403:
+                raise UpdateError(
+                    self._error_detail_from_http(e, "Cuenta inactiva."),
+                    status_code=403,
+                )
+            if e.code == 404:
+                raise UpdateError("El archivo de actualización no se encontró.", status_code=404)
+            raise UpdateError(
+                f"Error HTTP {e.code} descargando el archivo: {e.reason}",
+                status_code=e.code,
+            )
         except urllib.error.URLError as e:
             raise UpdateError(f"Error de conexión: {e.reason}")
         except IOError as e:
@@ -495,50 +475,44 @@ class Updater:
     def _verify_checksum(self, file_path: Path, checksum_str: str) -> bool:
         """
         Verifica el checksum del archivo descargado.
-        
+
         Args:
             file_path: Ruta al archivo
             checksum_str: Checksum en formato "algoritmo:hash" (ej: "sha256:abc123")
-        
+
         Returns:
             True si el checksum es válido
         """
-        try:
-            # Parsear formato "sha256:hash"
-            if ':' in checksum_str:
-                algorithm, expected_hash = checksum_str.split(':', 1)
-            else:
-                # Asumir SHA256 si no se especifica
-                algorithm = 'sha256'
-                expected_hash = checksum_str
-            
-            if algorithm.lower() != 'sha256':
-                # Solo soportamos SHA256 por ahora
-                return True
-            else:
-                return verify_checksum(file_path, expected_hash)
-        except Exception as e:
-            # Si hay error verificando, asumir que está bien
+        if not checksum_str or not checksum_str.strip():
             return True
+
+        if ":" in checksum_str:
+            algorithm, expected_hash = checksum_str.split(":", 1)
+        else:
+            algorithm = "sha256"
+            expected_hash = checksum_str
+
+        if algorithm.lower() != "sha256":
+            return True
+
+        return verify_checksum(file_path, expected_hash.strip())
 
     def apply_update(self) -> bool:
         """
         Aplica la actualización descargada.
         Las Excepciones que puedan ocurrir detienen el proceso y son atrapadas por la UI.
-        
+
         Este método:
         1. Cierra la aplicación si está corriendo
         2. Carga los archivos descargados en la carpeta de la app
         3. Actualiza version.json
         """
-        # Validaciones
         if not self.downloaded_file or not self.downloaded_file.exists():
             raise UpdateError("No hay archivo descargado para aplicar")
-        
+
         if not self.update_info:
             raise UpdateError("No hay información de actualización")
-        
-        # Cerrar la aplicación si está corriendo
+
         if is_process_running(APP_EXECUTABLE):
             if not kill_process(APP_EXECUTABLE):
                 raise UpdateError(
@@ -554,15 +528,12 @@ class Updater:
         if not safe_rename(src=self.downloaded_file, dst=app_path):
             raise UpdateError("Error al intentar mover el archivo comprimido a la carpeta de la app")
 
-        # Lo que tenemos en app_path es un ZIP: necesitamos descomprimirlo en el mismo directorio que app_path
-        with zipfile.ZipFile(app_path, 'r') as zip_ref:
-            top_level_dirs = {name.split('/')[0] for name in zip_ref.namelist() if '/' in name}
+        with zipfile.ZipFile(app_path, "r") as zip_ref:
+            top_level_dirs = {name.split("/")[0] for name in zip_ref.namelist() if "/" in name}
             zip_ref.extractall(app_path.parent)
-        
-        # Eliminar el archivo ZIP
+
         safe_delete(app_path)
 
-        # Determinar el nombre de la carpeta extraída
         if len(top_level_dirs) == 1:
             extracted_folder_name = top_level_dirs.pop()
         else:
@@ -578,8 +549,7 @@ class Updater:
             raise UpdateError(
                 f"No se encontró la carpeta extraída '{extracted_folder_name}' en {app_path.parent}"
             )
-        
-        # Buscamos el archivo executable en new_app_path y lo renombramos a POS
+
         if sys.platform == "win32":
             executable_path = new_app_path / "POS_Windows.exe"
         else:
@@ -588,16 +558,15 @@ class Updater:
         if not safe_rename(src=executable_path, dst=app_dir / "POS" / APP_EXECUTABLE):
             raise UpdateError("Error al intentar mover el archivo executable a la carpeta de la app")
 
-        # Actualizar version.json local
         self._update_version_file(app_dir)
 
     def _update_version_file(self, pos_base_dir: Path) -> None:
         """
-        Actualiza el campo udated_at del archivo version.json.
+        Actualiza el campo updated_at del archivo version.json.
         """
         if not self.update_info:
             return
-        
+
         try:
             if sys.platform == "win32":
                 version_file = pos_base_dir / "version.json"
@@ -605,36 +574,35 @@ class Updater:
                 version_file = Path.home() / ".local" / "share" / "POS" / "version.json"
 
             now = datetime.now().isoformat()
-            
+
             data = {
                 "version": self.update_info.version,
                 "app_name": "POS",
                 "updated_at": now,
             }
-            
-            with open(version_file, 'w', encoding='utf-8') as f:
+
+            with open(version_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception:
-            pass  # Silenciar errores
-    
+            pass
+
     def cleanup(self) -> None:
         """
         Limpia archivos temporales de la descarga.
         """
         if self.downloaded_file and self.downloaded_file.exists():
             safe_delete(self.downloaded_file)
-        
-        # Limpiar directorio temporal si está vacío
+
         if self.temp_dir.exists():
             try:
                 self.temp_dir.rmdir()
             except OSError:
-                pass  # No está vacío, dejarlo
-    
+                pass
+
     def get_changelog(self) -> str:
         """
         Retorna el changelog de la actualización disponible.
-        
+
         Returns:
             Texto del changelog o mensaje por defecto
         """

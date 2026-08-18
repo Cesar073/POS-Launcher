@@ -31,40 +31,17 @@ else:
 
 
 # ============================================================================
-# CONFIGURACIÓN DE GITHUB RELEASES
+# CONFIGURACIÓN DEL SERVIDOR WEB (actualizaciones POS)
 # ============================================================================
 
-# Configuración del repositorio
-GITHUB_OWNER = "Cesar073"
-GITHUB_REPO = "POS-Releases"
+# Host de plataforma (no usar dominio de tenant de Business Site).
+WEB_API_BASE = os.getenv("POS_WEB_API_BASE", "https://www.efectodomino.com.ar")
+UPDATES_CHECK_PATH = "/pos/api/updates/check"
+UPDATES_DOWNLOAD_PATH = "/pos/api/updates/download/{version}"
 
-# API de GitHub
-GITHUB_API_BASE = "https://api.github.com"
-
-# Token de autenticación de GitHub (Personal Access Token)
-# Requerido para repositorios privados. Para repos públicos puede ser None.
-
-# CÓMO OBTENER UN TOKEN:
-# 1. Ve a GitHub > Settings > Developer settings > Personal access tokens > Tokens (classic)
-# 2. Click en "Generate new token (classic)"
-# 3. Dale un nombre descriptivo
-# 4. Selecciona el scope "repo" (para repos privados) o "public_repo" (para repos públicos)
-# 5. Copia el token generado
-# 6. Configura la variable de entorno GITHUB_TOKEN en tu sistema
-
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-
-# Si es True, el launcher solo busca actualizaciones en releases marcados como
-# "prerelease" (release candidate) en GitHub. Si es False, usa el último release estable.
-CHECK_RELEASE_CANDIDATE_ONLY = os.getenv("CHECK_RELEASE_CANDIDATE_ONLY", "false") == "true"
-
-# Patrón para buscar el asset en los releases
-# El sistema buscará assets que coincidan con este patrón o con el nombre del ejecutable
-# Ejemplos de patrones posibles:
-# - "POS.exe" (nombre exacto del ejecutable)
-# - "POS-Windows" (prefijo del asset)
-# - "POS" (nombre base)
-ASSET_NAME_PATTERN = APP_EXECUTABLE_NAME + "-Windows" # Por defecto usa el nombre de la app
+# UUID de PosCustomer. En producción vive en launcher_config.json local.
+# En desarrollo se puede inyectar con POS_CUSTOMER_UUID.
+LAUNCHER_CONFIG_FILENAME = "launcher_config.json"
 
 
 # ============================================================================
@@ -124,8 +101,8 @@ DOWNLOAD_TIMEOUT = 600  # 10 minutos
 # Tamaño del buffer para descarga (bytes)
 DOWNLOAD_CHUNK_SIZE = 32768  # 32 KB (mejor para Drive)
 
-# User-Agent para las peticiones HTTP
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+# User-Agent: POS-Launcher/<versión> (se arma en updater.py)
+USER_AGENT_PREFIX = "POS-Launcher"
 
 # Número de reintentos para descargas fallidas
 MAX_DOWNLOAD_RETRIES = 3

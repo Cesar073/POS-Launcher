@@ -10,6 +10,8 @@ Funciones auxiliares para:
 import hashlib
 import ctypes
 import ctypes.wintypes
+import json
+import os
 import sys
 import shutil
 import subprocess
@@ -22,6 +24,7 @@ from resources.logging_method import log_function
 from resources.config import (
     APP_EXECUTABLE_NAME,
     APP_EXECUTABLE,
+    LAUNCHER_CONFIG_FILENAME,
 )
 
 # ============================================================================
@@ -132,6 +135,41 @@ def get_pos_base_dir_windows() -> Path:
         buf
     )
     return Path(buf.value) / "NexoPOS"
+
+
+@log_function
+def get_launcher_config_path() -> Path:
+    """Ruta al archivo de config local del Launcher (UUID del cliente POS)."""
+    return get_pos_base_dir_windows() / LAUNCHER_CONFIG_FILENAME
+
+
+@log_function
+def get_pos_customer_uuid() -> Optional[str]:
+    """
+    UUID de PosCustomer para autenticar check/download.
+
+    Orden: variable de entorno POS_CUSTOMER_UUID, luego launcher_config.json.
+    No genera el UUID: lo recibe como dato de configuración.
+    """
+    env_uuid = os.getenv("POS_CUSTOMER_UUID", "").strip()
+    if env_uuid:
+        return env_uuid
+
+    config_path = get_launcher_config_path()
+    if not config_path.exists():
+        return None
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    value = str(data.get("customer_uuid") or "").strip()
+    return value or None
 
 
 @log_function

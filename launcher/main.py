@@ -21,9 +21,13 @@ import logging
 from updater import Updater, UpdateError, user_message_for_failed_update_check
 from resources.config import (
     APP_EXECUTABLE,
-    GITHUB_TOKEN,
 )
-from resources.utils import start_application, get_pos_base_dir_windows, has_backups
+from resources.utils import (
+    start_application,
+    get_pos_base_dir_windows,
+    has_backups,
+    get_pos_customer_uuid,
+)
 from ui import LauncherUI
 from resources.logging_method import log_function
 from resources.exception_logging import (
@@ -74,14 +78,24 @@ def run_launcher():
     """
     current_version = get_installed_version_of_pos()
     has_backups_available = has_backups()
-    updater = Updater(current_version)
+    updater = Updater(current_version, customer_uuid=get_pos_customer_uuid())
+
+    MISSING_UUID_MESSAGE = (
+        "Falta identificar esta instalación.\n\n"
+        "No se puede comprobar actualizaciones sin el identificador del cliente POS. "
+        "Podés continuar con la versión que ya tenés instalada."
+    )
 
     # Función para buscar actualizaciones (se ejecutará después del delay)
     def check_for_updates():
         update_info = None
         check_failed_message = None
         try:
-            update_info = updater.check_for_updates()
+            updater.customer_uuid = get_pos_customer_uuid()
+            if not updater.customer_uuid:
+                check_failed_message = MISSING_UUID_MESSAGE
+            else:
+                update_info = updater.check_for_updates()
         except UpdateError as e:
             print(f"(x001) Error verificando actualizaciones: {e}")
             log_exception(e, context="check_for_updates: UpdateError")
@@ -123,8 +137,8 @@ def main():
     install_exception_logging()
     log_message(
         logging.INFO,
-        "Diagnóstico: GITHUB_TOKEN definido en entorno: %s",
-        bool(GITHUB_TOKEN and str(GITHUB_TOKEN).strip()),
+        "Diagnóstico: POS_CUSTOMER_UUID configurado: %s",
+        bool(get_pos_customer_uuid()),
     )
     try:
         run_launcher()
