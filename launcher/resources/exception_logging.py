@@ -1,33 +1,54 @@
 """
 Registro de excepciones en archivo para el launcher compilado (sin consola).
 
-Escribe en %LocalAppData%\\NexoPOS\\launcher_errors.log (append, UTF-8).
+Escribe en %LocalAppData%\\NexoPOS\\Launcher\\logs\\launcher_errors.log (append, UTF-8).
+Al cerrar el launcher envía al servidor solo el tramo que todavía no se mandó.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import socket
+import ssl
 import sys
 import traceback
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
 _logger: Optional[logging.Logger] = None
+_LOG_FILENAME = "launcher_errors.log"
+_OFFSET_FILENAME = ".launcher_errors.upload_offset"
 
 
-def get_log_file_path() -> Path:
-    """Ruta del archivo de log junto a los datos de la app."""
+def _nexo_pos_dir() -> Path:
     try:
         from resources.utils import get_pos_base_dir_windows
 
-        base = get_pos_base_dir_windows()
+        return get_pos_base_dir_windows()
     except Exception:
-        base = Path.home() / "AppData" / "Local" / "NexoPOS"
+        return Path.home() / "AppData" / "Local" / "NexoPOS"
+
+
+def get_log_file_path() -> Path:
+    """Ruta del archivo de log: NexoPOS/Launcher/logs/launcher_errors.log."""
+    base = _nexo_pos_dir()
+    log_dir = base / "Launcher" / "logs"
     try:
-        base.mkdir(parents=True, exist_ok=True)
+        log_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
         pass
-    return base / "launcher_errors.log"
+    new_path = log_dir / _LOG_FILENAME
+    old_path = base / _LOG_FILENAME
+    if old_path.is_file() and not new_path.exists():
+        try:
+            old_path.replace(new_path)
+        except OSError:
+            pass
+    return new_path
 
 
 def _ensure_logger() -> logging.Logger:
@@ -93,3 +114,133 @@ def log_message(level: int, msg: str, *args) -> None:
         _ensure_logger().log(level, msg, *args)
     except Exception:
         pass
+
+
+def _offset_path() -> Path:
+    return get_log_file_path().parent / _OFFSET_FILENAME
+
+
+def _read_offset() -> int:
+    try:
+        raw = _offset_path().read_text(encoding="utf-8").strip()
+        return max(0, int(raw))
+    except (OSError, ValueError):
+        return 0
+
+
+def _write_offset(offset: int) -> None:
+    _offset_path().write_text(str(offset), encoding="utf-8")
+
+
+def _flush_log() -> None:
+    log = _logger
+    if log is None:
+        return
+    for handler in list(log.handlers):
+        try:
+            handler.flush()
+        except Exception:
+            pass
+
+
+def _pending_log() -> tuple[str, int]:
+    """Texto nuevo desde el último envío y el offset final del archivo."""
+    _flush_log()
+    path = get_log_file_path()
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return "", 0
+    offset = _read_offset()
+    if offset > len(data):
+        offset = 0
+    chunk = data[offset:]
+    if not chunk:
+        return "", len(data)
+    text = chunk.decode("utf-8", errors="replace")
+    from resources.config import MAX_LOG_UPLOAD_CHARS
+
+    if len(text) > MAX_LOG_UPLOAD_CHARS:
+        text = text[-MAX_LOG_UPLOAD_CHARS:]
+    return text, len(data)
+
+
+def _current_user() -> str:
+    return (os.environ.get("USERNAME") or os.environ.get("USER") or "").strip()
+
+
+def _local_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(0.2)
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+    except OSError:
+        return ""
+
+
+def _pos_version() -> str:
+    path = _nexo_pos_dir() / "version.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    version = data.get("version")
+    return str(version).strip() if version else ""
+
+
+def _post_log(text: str) -> bool:
+    from resources.config import LOG_UPLOAD_TIMEOUT, LOGS_PATH, WEB_API_BASE
+    from resources.utils import load_launcher_credentials
+    from resources.version import get_version
+    from updater import bearer_value
+
+    credentials = load_launcher_credentials()
+    bearer = bearer_value(credentials.installation_token, credentials.customer_uuid)
+    if not bearer:
+        return False
+
+    payload = {
+        "usuario": _current_user(),
+        "ip": _local_ip(),
+        "pos_version": _pos_version(),
+        "launcher_version": get_version(),
+        "log": text,
+    }
+    headers = {
+        "Authorization": f"Bearer {bearer}",
+        "User-Agent": f"POS-Launcher/{get_version()}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    if credentials.installation_token and credentials.installation_id:
+        headers["X-Pos-Installation-Id"] = credentials.installation_id
+
+    url = f"{WEB_API_BASE.rstrip('/')}{LOGS_PATH}"
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    context = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(request, timeout=LOG_UPLOAD_TIMEOUT, context=context) as response:
+            return 200 <= response.status < 300
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+def upload_error_log() -> None:
+    """Envía el log nuevo. Si falla, no avanza el offset y se reintenta en el próximo cierre."""
+    try:
+        text, new_offset = _pending_log()
+        if not text.strip():
+            return
+        if not _post_log(text):
+            return
+        _write_offset(new_offset)
+    except Exception:
+        return

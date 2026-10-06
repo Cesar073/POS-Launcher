@@ -18,6 +18,9 @@ import tempfile
 # Nombre del ejecutable principal (sin extensión)
 APP_EXECUTABLE_NAME = "POS"
 
+# Base SQLite del POS. Vive dentro de la carpeta POS y no forma parte del ZIP.
+POS_DATABASE_FILENAME = "sys_store.dat"
+
 # Nombre del archivo de checksum
 CHECKSUM_FILENAME = "checksums.txt"
 
@@ -38,6 +41,10 @@ else:
 WEB_API_BASE = os.getenv("POS_WEB_API_BASE", "https://www.efectodomino.com.ar")
 UPDATES_CHECK_PATH = "/pos/api/updates/check"
 UPDATES_DOWNLOAD_PATH = "/pos/api/updates/download/{version}"
+ACTIVATE_PATH = "/pos/api/activate"
+LICENSE_PATH = "/pos/api/license"
+EVENTS_PATH = "/pos/api/events"
+LOGS_PATH = "/pos/api/logs"
 
 # UUID de PosCustomer. En producción vive en launcher_config.json local.
 # En desarrollo se puede inyectar con POS_CUSTOMER_UUID.
@@ -95,6 +102,12 @@ def get_temp_download_dir() -> Path:
 # Timeout para conexiones HTTP (segundos)
 HTTP_TIMEOUT = 5
 
+# Timeout para enviar launcher_errors.log (segundos)
+LOG_UPLOAD_TIMEOUT = 15
+
+# Tope del texto de log que viaja en cada envío
+MAX_LOG_UPLOAD_CHARS = 256 * 1024
+
 # Timeout para descarga de archivos grandes (segundos)
 DOWNLOAD_TIMEOUT = 600  # 10 minutos
 
@@ -130,6 +143,9 @@ THEME_WARNING = "#fbbc04"       # Amarillo advertencia
 
 # Tiempo que muestra la splash screen (ms)
 SPLASH_DURATION = 1500
+
+# Espera visible antes de abrir el POS cuando no hay actualización (ms)
+UP_TO_DATE_REDIRECT_MS = 3000
 
 
 # ============================================================================

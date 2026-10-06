@@ -16,6 +16,8 @@ import sys
 import shutil
 import subprocess
 import time
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -139,37 +141,166 @@ def get_pos_base_dir_windows() -> Path:
 
 @log_function
 def get_launcher_config_path() -> Path:
-    """Ruta al archivo de config local del Launcher (UUID del cliente POS)."""
+    """Ruta al archivo de config local del Launcher."""
     return get_pos_base_dir_windows() / LAUNCHER_CONFIG_FILENAME
 
 
-@log_function
-def get_pos_customer_uuid() -> Optional[str]:
-    """
-    UUID de PosCustomer para autenticar check/download.
-
-    Orden: variable de entorno POS_CUSTOMER_UUID, luego launcher_config.json.
-    No genera el UUID: lo recibe como dato de configuración.
-    """
-    env_uuid = os.getenv("POS_CUSTOMER_UUID", "").strip()
-    if env_uuid:
-        return env_uuid
-
+def _read_launcher_config() -> dict:
+    """Lee launcher_config.json. No registra el contenido (puede traer secretos)."""
     config_path = get_launcher_config_path()
     if not config_path.exists():
-        return None
-
+        return {}
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
-        return None
+        return {}
+    return data if isinstance(data, dict) else {}
 
-    if not isinstance(data, dict):
-        return None
 
-    value = str(data.get("customer_uuid") or "").strip()
-    return value or None
+def _write_launcher_config(data: dict) -> None:
+    config_path = get_launcher_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class LauncherCredentials:
+    """Credenciales locales. El token de instalación tiene prioridad sobre el UUID legado."""
+
+    installation_token: Optional[str] = None
+    installation_id: Optional[str] = None
+    customer_uuid: Optional[str] = None
+    edition: Optional[str] = None
+    valid_until: Optional[str] = None
+
+
+def _clean(value) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def credentials_from_mapping(data: dict, env_uuid: Optional[str] = None) -> LauncherCredentials:
+    """
+    Arma la credencial en memoria.
+
+    Si hay installation_token, el UUID (archivo o entorno) no se usa como Bearer.
+    """
+    token = _clean(data.get("installation_token"))
+    file_uuid = _clean(data.get("customer_uuid"))
+    legacy_uuid = None if token else (_clean(env_uuid) or file_uuid)
+    return LauncherCredentials(
+        installation_token=token,
+        installation_id=_clean(data.get("installation_id")),
+        customer_uuid=legacy_uuid,
+        edition=_clean(data.get("edition")),
+        valid_until=_clean(data.get("valid_until")),
+    )
+
+
+def load_launcher_credentials() -> LauncherCredentials:
+    """
+    Lee la credencial de instalación y, si no hay token, el UUID legado.
+
+    El UUID de entorno POS_CUSTOMER_UUID solo aplica cuando todavía no hay token.
+    """
+    return credentials_from_mapping(
+        _read_launcher_config(),
+        os.getenv("POS_CUSTOMER_UUID", ""),
+    )
+
+
+def get_pos_customer_uuid() -> Optional[str]:
+    """
+    UUID legado de PosCustomer.
+
+    Orden: variable de entorno POS_CUSTOMER_UUID, luego launcher_config.json.
+    Si ya hay installation_token, no se usa como Bearer.
+    """
+    return load_launcher_credentials().customer_uuid
+
+
+def save_installation_credentials(
+    *,
+    installation_token: str,
+    installation_id: str,
+    edition: Optional[str] = None,
+    valid_until: Optional[str] = None,
+) -> None:
+    """Guarda el token y el id de instalación. No persiste el código de activación."""
+    data = _read_launcher_config()
+    data["installation_token"] = installation_token
+    data["installation_id"] = installation_id
+    if edition:
+        data["edition"] = edition
+    if valid_until:
+        data["valid_until"] = valid_until
+    _write_launcher_config(data)
+
+
+def remember_license_cache(
+    *,
+    edition: Optional[str] = None,
+    valid_until: Optional[str] = None,
+) -> None:
+    """Actualiza edición y vigencia en caché local, sin tocar el token."""
+    data = _read_launcher_config()
+    changed = False
+    if edition and data.get("edition") != edition:
+        data["edition"] = edition
+        changed = True
+    if valid_until and data.get("valid_until") != valid_until:
+        data["valid_until"] = valid_until
+        changed = True
+    if changed:
+        _write_launcher_config(data)
+
+
+def client_os() -> str:
+    """Sistema que el servidor usa para elegir el artefacto. El cliente no elige el ZIP."""
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+def _windows_machine_guid() -> Optional[str]:
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Cryptography",
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, "MachineGuid")
+    except OSError:
+        return None
+    return _clean(value)
+
+
+def get_machine_id() -> str:
+    """
+    Identificador estable del equipo, hasheado.
+
+    En Windows sale del MachineGuid. Si no está disponible, se persiste un id local.
+    """
+    raw = _windows_machine_guid()
+    if raw:
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    data = _read_launcher_config()
+    fallback = _clean(data.get("machine_fallback_id"))
+    if not fallback:
+        fallback = str(uuid.uuid4())
+        data["machine_fallback_id"] = fallback
+        _write_launcher_config(data)
+    return hashlib.sha256(fallback.encode("utf-8")).hexdigest()
 
 
 @log_function

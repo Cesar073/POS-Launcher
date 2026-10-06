@@ -7,13 +7,14 @@ Este módulo contiene la lógica para:
 - Aplicar actualizaciones
 - Manejar rollback si algo falla
 
-El sistema usa la API de Efecto Dominó (`/pos/api/updates/...`) autenticada
-con el UUID del cliente POS. El token de GitHub no vive en el cliente.
+El sistema usa la API de Efecto Dominó (`/pos/api/updates/...`).
+La credencial es el token de instalación devuelto por `/pos/api/activate`.
+Si todavía no hay token y el config tiene el UUID legado, se sigue enviando ese UUID.
 
 Uso:
     from launcher.updater import Updater
 
-    updater = Updater(current_version="0.1.0", customer_uuid="...")
+    updater = Updater(current_version="0.1.0", installation_token="...")
 
     # Verificar si hay actualización
     update_info = updater.check_for_updates()
@@ -28,6 +29,7 @@ Uso:
 """
 import json
 import re
+import shutil
 import ssl
 import sys
 import time
@@ -45,6 +47,9 @@ from resources.config import (
     WEB_API_BASE,
     UPDATES_CHECK_PATH,
     UPDATES_DOWNLOAD_PATH,
+    ACTIVATE_PATH,
+    LICENSE_PATH,
+    EVENTS_PATH,
     HTTP_TIMEOUT,
     DOWNLOAD_TIMEOUT,
     DOWNLOAD_CHUNK_SIZE,
@@ -52,6 +57,7 @@ from resources.config import (
     MAX_DOWNLOAD_RETRIES,
     RETRY_DELAY,
     APP_EXECUTABLE,
+    POS_DATABASE_FILENAME,
     get_temp_download_dir,
 )
 from resources.utils import (
@@ -62,6 +68,11 @@ from resources.utils import (
     is_process_running,
     kill_process,
     get_pos_base_dir_windows,
+    load_launcher_credentials,
+    save_installation_credentials,
+    remember_license_cache,
+    client_os,
+    get_machine_id,
 )
 from resources.version import get_version as get_launcher_version
 
@@ -82,9 +93,18 @@ class UpdateInfo:
 class UpdateError(Exception):
     """Error durante el proceso de actualización."""
 
-    def __init__(self, message: str, status_code: int | None = None):
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        *,
+        user_message: str | None = None,
+        license_block: bool = False,
+    ):
         super().__init__(message)
         self.status_code = status_code
+        self.user_message = user_message
+        self.license_block = license_block
 
 
 def is_connectivity_related_failure(exc: BaseException) -> bool:
@@ -116,6 +136,9 @@ def user_message_for_failed_update_check(exc: UpdateError) -> str:
     """
     Texto para mostrar en pantalla cuando falla la verificación de actualizaciones.
     """
+    custom = getattr(exc, "user_message", None)
+    if custom:
+        return custom
     code = getattr(exc, "status_code", None)
     if code == 401:
         return (
@@ -151,6 +174,120 @@ def user_message_for_failed_update_check(exc: UpdateError) -> str:
     )
 
 
+def user_message_for_activation(exc: UpdateError) -> str:
+    """Texto para un canje de código fallido. No incluye el código."""
+    code = getattr(exc, "status_code", None)
+    if code in (400, 401, 404):
+        return (
+            "El código no es válido, está vencido o fue revocado.\n\n"
+            "Podés reintentar o continuar con la versión instalada."
+        )
+    if code == 409:
+        return (
+            "Este código ya fue utilizado.\n\n"
+            "Si necesitás otra instalación, pedí un código nuevo."
+        )
+    if code == 403:
+        detail = getattr(exc, "user_message", None) or str(exc)
+        return (
+            f"{detail}\n\n"
+            "Podés continuar con la versión instalada."
+        )
+    if is_connectivity_related_failure(exc):
+        return (
+            "No se pudo activar esta instalación.\n\n"
+            "Comprueba tu conexión a Internet y que el firewall o el antivirus no bloqueen "
+            "esta aplicación.\n\n"
+            "Podés reintentar o continuar con la versión instalada."
+        )
+    return (
+        "No se pudo activar la instalación.\n\n"
+        "Podés reintentar más tarde o continuar con la versión instalada."
+    )
+
+
+def bearer_value(installation_token: str | None, customer_uuid: str | None) -> str | None:
+    """Elige la credencial. Función de módulo para no registrar el secreto en el log de métodos."""
+    return installation_token or customer_uuid
+
+
+def extract_license_fields(payload: dict) -> dict:
+    """
+    Lee edición, vigencia y updates_allowed del check o de GET /license.
+
+    Acepta los campos en la raíz o dentro de un objeto `license`.
+    `updates_allowed` queda en None si el servidor no lo envió.
+    """
+    nested = payload.get("license")
+    if not isinstance(nested, dict):
+        nested = {}
+
+    def pick(key: str):
+        if key in payload and payload[key] is not None:
+            return payload[key]
+        return nested.get(key)
+
+    updates_allowed = pick("updates_allowed")
+    if not isinstance(updates_allowed, bool):
+        updates_allowed = None
+
+    edition = pick("edition")
+    valid_until = pick("valid_until")
+    message = pick("message")
+    billing_status = pick("billing_status")
+    return {
+        "edition": str(edition).strip() if isinstance(edition, str) and edition.strip() else None,
+        "valid_until": str(valid_until).strip() if valid_until not in (None, "") else None,
+        "updates_allowed": updates_allowed,
+        "message": message.strip() if isinstance(message, str) else "",
+        "billing_status": billing_status.strip().lower() if isinstance(billing_status, str) else "",
+    }
+
+
+def apply_debt_update_block(fields: dict) -> dict:
+    """En deuda no hay actualizaciones. La vigencia extra la resuelve el POS."""
+    if fields.get("billing_status") == "past_due":
+        fields["updates_allowed"] = False
+    return fields
+
+
+def merge_license_fields(fields: dict, extra: dict) -> dict:
+    if fields["updates_allowed"] is None:
+        fields["updates_allowed"] = extra["updates_allowed"]
+    if not fields["edition"]:
+        fields["edition"] = extra["edition"]
+    if not fields["valid_until"]:
+        fields["valid_until"] = extra["valid_until"]
+    if not fields["message"]:
+        fields["message"] = extra["message"]
+    if not fields["billing_status"]:
+        fields["billing_status"] = extra["billing_status"]
+    return fields
+
+
+def database_filenames() -> tuple[str, ...]:
+    """sys_store.dat y los archivos que SQLite deja al lado si hay un journal abierto."""
+    name = POS_DATABASE_FILENAME
+    return (name, f"{name}-journal", f"{name}-wal", f"{name}-shm")
+
+
+def copy_database_from_backup(app_dir: Path) -> None:
+    """
+    Copia sys_store.dat desde backup/POS hacia POS.
+
+    El archivo del backup no se mueve ni se borra.
+    """
+    source_dir = app_dir / "backup" / "POS"
+    if not source_dir.is_dir():
+        return
+    dest_dir = app_dir / "POS"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for name in database_filenames():
+        source = source_dir / name
+        if source.is_file():
+            shutil.copy2(source, dest_dir / name)
+
+
 def _filename_from_content_disposition(header: str | None, fallback: str) -> str:
     if not header:
         return fallback
@@ -174,22 +311,39 @@ class Updater:
         self,
         current_version: str | None = None,
         customer_uuid: str | None = None,
+        installation_token: str | None = None,
+        installation_id: str | None = None,
     ):
         """
         Inicializa el updater.
 
         Args:
             current_version: Versión actual instalada o None si no se encuentra instalada.
-            customer_uuid: UUID de PosCustomer (Bearer). Obligatorio para hablar con la API.
+            customer_uuid: UUID legado. Se usa solo si no hay installation_token.
+            installation_token: Credencial devuelta por /pos/api/activate.
+            installation_id: Id de instalación que viaja en X-Pos-Installation-Id.
         """
         self.current_version = current_version
         self.customer_uuid = (customer_uuid or "").strip() or None
+        self.installation_token = (installation_token or "").strip() or None
+        self.installation_id = (installation_id or "").strip() or None
+        self.updates_allowed: bool | None = None
         self.temp_dir = get_temp_download_dir()
         self.downloaded_file: Optional[Path] = None
         self.update_info: Optional[UpdateInfo] = None
 
         # Callback para reportar progreso de descarga
         self.progress_callback: Optional[Callable[[int, int], None]] = None
+
+    def reload_credentials(self) -> None:
+        """Vuelve a leer launcher_config.json. El token pisa al UUID legado."""
+        credentials = load_launcher_credentials()
+        self.installation_token = credentials.installation_token
+        self.installation_id = credentials.installation_id
+        self.customer_uuid = credentials.customer_uuid
+
+    def has_auth(self) -> bool:
+        return bool(bearer_value(self.installation_token, self.customer_uuid))
 
     def set_progress_callback(self, callback: Callable[[int, int], None]) -> None:
         """
@@ -204,16 +358,20 @@ class Updater:
         return f"{USER_AGENT_PREFIX}/{get_launcher_version()}"
 
     def _headers(self, *, binary: bool = False) -> dict[str, str]:
-        if not self.customer_uuid:
+        bearer = bearer_value(self.installation_token, self.customer_uuid)
+        if not bearer:
             raise UpdateError(
                 "Falta el identificador del cliente POS.",
                 status_code=401,
             )
-        return {
-            "Authorization": f"Bearer {self.customer_uuid}",
+        headers = {
+            "Authorization": f"Bearer {bearer}",
             "User-Agent": self._user_agent(),
             "Accept": "application/octet-stream" if binary else "application/json",
         }
+        if self.installation_token and self.installation_id:
+            headers["X-Pos-Installation-Id"] = self.installation_id
+        return headers
 
     def _error_detail_from_http(self, error: urllib.error.HTTPError, fallback: str) -> str:
         try:
@@ -226,14 +384,36 @@ class Updater:
             pass
         return fallback
 
-    def _make_json_request(self, url: str, timeout: int = HTTP_TIMEOUT) -> dict:
-        """Realiza una petición HTTP GET JSON al servidor web."""
-        request = urllib.request.Request(url, headers=self._headers(binary=False))
+    def _make_json_request(
+        self,
+        url: str,
+        timeout: int = HTTP_TIMEOUT,
+        *,
+        method: str = "GET",
+        payload: dict | None = None,
+        authenticated: bool = True,
+    ) -> dict:
+        """Realiza una petición HTTP JSON al servidor web."""
+        if authenticated:
+            headers = self._headers(binary=False)
+        else:
+            headers = {
+                "User-Agent": self._user_agent(),
+                "Accept": "application/json",
+            }
+        data = None
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+            data = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(url, data=data, headers=headers, method=method)
         context = ssl.create_default_context()
 
         try:
             with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
-                return json.loads(response.read().decode("utf-8"))
+                raw = response.read()
+                if not raw:
+                    return {}
+                parsed = json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 raise UpdateError(
@@ -251,7 +431,12 @@ class Updater:
                     status_code=400,
                 )
             if e.code == 404:
-                raise UpdateError("No se encontró la actualización.", status_code=404)
+                raise UpdateError("No se encontró el recurso.", status_code=404)
+            if e.code == 409:
+                raise UpdateError(
+                    self._error_detail_from_http(e, "El código ya fue utilizado."),
+                    status_code=409,
+                )
             raise UpdateError(f"Error HTTP {e.code}: {e.reason}", status_code=e.code)
         except urllib.error.URLError as e:
             raise UpdateError(f"Error de conexión: {e.reason}")
@@ -260,26 +445,147 @@ class Updater:
         except json.JSONDecodeError:
             raise UpdateError("La respuesta del servidor tiene formato inválido")
 
+        if not isinstance(parsed, dict):
+            raise UpdateError("La respuesta del servidor tiene formato inválido")
+        return parsed
+
+    def activate(self, code: str) -> None:
+        """
+        Canjea un código de venta y guarda el token de instalación.
+
+        El código no se escribe en el config ni se incluye en los errores.
+        """
+        normalized = (code or "").strip()
+        if not normalized:
+            raise UpdateError("Falta el código de activación.", status_code=400)
+
+        url = f"{WEB_API_BASE.rstrip('/')}{ACTIVATE_PATH}"
+        payload = {
+            "code": normalized,
+            "machine_id": get_machine_id(),
+            "os": client_os(),
+            "launcher_version": get_launcher_version(),
+        }
+        try:
+            data = self._make_json_request(
+                url,
+                method="POST",
+                payload=payload,
+                authenticated=False,
+            )
+        except UpdateError as exc:
+            message = str(exc).replace(normalized, "***")
+            user_message = exc.user_message.replace(normalized, "***") if exc.user_message else None
+            if exc.status_code == 403 and not user_message:
+                user_message = message
+            raise UpdateError(
+                message,
+                status_code=exc.status_code,
+                user_message=user_message,
+                license_block=exc.license_block,
+            ) from None
+
+        token = str(data.get("installation_token") or "").strip()
+        installation_id = str(data.get("installation_id") or "").strip()
+        if not token or not installation_id:
+            raise UpdateError("El servidor no devolvió la credencial de instalación.")
+
+        edition = data.get("edition")
+        valid_until = data.get("valid_until")
+        edition_text = str(edition).strip() if isinstance(edition, str) and edition.strip() else None
+        valid_text = str(valid_until).strip() if valid_until not in (None, "") else None
+        save_installation_credentials(
+            installation_token=token,
+            installation_id=installation_id,
+            edition=edition_text,
+            valid_until=valid_text,
+        )
+        self.installation_token = token
+        self.installation_id = installation_id
+        self.customer_uuid = None
+
+    def _report_update_check_event(self) -> None:
+        """Avisa al servidor que se consultaron actualizaciones. No corta el flujo si falla."""
+        if not bearer_value(self.installation_token, self.customer_uuid):
+            return
+        url = f"{WEB_API_BASE.rstrip('/')}{EVENTS_PATH}"
+        try:
+            self._make_json_request(
+                url,
+                method="POST",
+                payload={
+                    "event": "update_check",
+                    "app_version": self.current_version or "",
+                    "os": client_os(),
+                },
+            )
+        except UpdateError:
+            return
+
+    def _resolve_license(self, release_data: dict) -> dict:
+        fields = extract_license_fields(release_data)
+        if self._needs_license_lookup(fields):
+            fields = self._lookup_license(fields)
+        return apply_debt_update_block(fields)
+
+    def _needs_license_lookup(self, fields: dict) -> bool:
+        if not self.installation_token:
+            return False
+        if fields["updates_allowed"] is None:
+            return True
+        return not fields["billing_status"]
+
+    def _lookup_license(self, fields: dict) -> dict:
+        url = f"{WEB_API_BASE.rstrip('/')}{LICENSE_PATH}"
+        try:
+            payload = self._make_json_request(url)
+        except UpdateError:
+            return fields
+        return merge_license_fields(fields, extract_license_fields(payload))
+
+    def _raise_if_updates_blocked(self, fields: dict) -> None:
+        self.updates_allowed = fields["updates_allowed"]
+        if fields["updates_allowed"] is not False:
+            return
+        message = fields["message"] or "Las actualizaciones no están habilitadas para esta instalación."
+        lines = [message]
+        if fields["valid_until"] and fields["valid_until"] not in message:
+            lines.append(f"Vigencia: {fields['valid_until']}")
+        lines.append("Podés continuar con la versión que ya tenés instalada.")
+        text = "\n\n".join(lines)
+        raise UpdateError(text, user_message=text, license_block=True)
+
     def check_for_updates(self) -> Optional[UpdateInfo]:
         """
         Verifica si hay una actualización disponible.
-        Consulta el servidor web y confía en `update_available`.
+        Usa el ZIP que indica el servidor para la edición y el sistema autorizados.
         """
-        if not self.customer_uuid:
+        if not bearer_value(self.installation_token, self.customer_uuid):
             raise UpdateError(
                 "Falta el identificador del cliente POS.",
                 status_code=401,
             )
 
-        url = f"{WEB_API_BASE.rstrip('/')}{UPDATES_CHECK_PATH}"
+        query = {"os": client_os()}
         if self.current_version:
-            query = urllib.parse.urlencode({"version": self.current_version.lstrip("vV")})
-            url = f"{url}?{query}"
+            query["version"] = self.current_version.lstrip("vV")
+        url = (
+            f"{WEB_API_BASE.rstrip('/')}{UPDATES_CHECK_PATH}"
+            f"?{urllib.parse.urlencode(query)}"
+        )
 
         release_data = self._make_json_request(url)
+        self._report_update_check_event()
 
-        if not isinstance(release_data, dict):
-            raise UpdateError("La respuesta del servidor tiene formato inválido")
+        fields = self._resolve_license(release_data)
+        try:
+            remember_license_cache(
+                edition=fields["edition"],
+                valid_until=fields["valid_until"],
+            )
+        except Exception:
+            pass
+        self._raise_if_updates_blocked(fields)
 
         if not release_data.get("update_available"):
             return None
@@ -310,7 +616,7 @@ class Updater:
 
         self.update_info = UpdateInfo(
             id=0,
-            name=f"POS-Windows-v{available_version}.zip",
+            name=f"POS-v{available_version}.zip",
             version=available_version,
             download_url=download_url,
             changelog=changelog,
@@ -362,6 +668,16 @@ class Updater:
         """
         Descarga la actualización.
         """
+        if self.updates_allowed is False:
+            raise UpdateError(
+                "Las actualizaciones no están habilitadas para esta instalación.",
+                license_block=True,
+                user_message=(
+                    "Las actualizaciones no están habilitadas para esta instalación.\n\n"
+                    "Podés continuar con la versión que ya tenés instalada."
+                ),
+            )
+
         info = update_info or self.update_info
         if not info:
             raise UpdateError("No hay información de actualización disponible")
@@ -505,7 +821,8 @@ class Updater:
         Este método:
         1. Cierra la aplicación si está corriendo
         2. Carga los archivos descargados en la carpeta de la app
-        3. Actualiza version.json
+        3. Copia sys_store.dat desde backup/POS hacia la carpeta POS nueva
+        4. Actualiza version.json
         """
         if not self.downloaded_file or not self.downloaded_file.exists():
             raise UpdateError("No hay archivo descargado para aplicar")
@@ -558,6 +875,7 @@ class Updater:
         if not safe_rename(src=executable_path, dst=app_dir / "POS" / APP_EXECUTABLE):
             raise UpdateError("Error al intentar mover el archivo executable a la carpeta de la app")
 
+        copy_database_from_backup(app_dir)
         self._update_version_file(app_dir)
 
     def _update_version_file(self, pos_base_dir: Path) -> None:

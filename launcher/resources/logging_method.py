@@ -154,6 +154,9 @@ class MethodLogger:
                 return "{}"
             lines = [f"{indent}{{"]  # Primera línea con indentación
             for k, v in value.items():
+                if _is_sensitive_log_key(k):
+                    lines.append(f"{next_indent}{k}: ***")
+                    continue
                 formatted_value = self._format_value(v, indent_level + 1)
                 # Si el valor formateado tiene múltiples líneas, necesitamos manejar la indentación
                 if "\n" in formatted_value:
@@ -272,6 +275,9 @@ class MethodLogger:
                     # Formatear cada argumento correctamente
                     args_lines = []
                     for k, v in args_dict.items():
+                        if _is_sensitive_log_key(k):
+                            args_lines.append(f"{k}: ***")
+                            continue
                         formatted_value = logger.simplify_logging_message(v)
                         # Si el valor tiene múltiples líneas, necesitamos manejar la indentación correctamente
                         if "\n" in formatted_value:
@@ -398,7 +404,10 @@ class MethodLogger:
             # Crear diccionario con argumentos
             args_dict = dict(zip(params, args))
             args_dict.update(kwargs)
-            args_str = "\n    ".join([f"{k}: {v}" for k, v in args_dict.items()])
+            args_str = "\n    ".join(
+                f"{k}: ***" if _is_sensitive_log_key(k) else f"{k}: {v}"
+                for k, v in args_dict.items()
+            )
             
             # Log de entrada
             input_msg = f"INPUT: [{function_name}]\n"
@@ -460,6 +469,20 @@ class MethodLogger:
             return result
         
         return wrapper
+
+
+# Nombres que no deben aparecer en consola ni en el registro del launcher.
+_SENSITIVE_LOG_KEYS = frozenset({
+    "code",
+    "installation_token",
+    "customer_uuid",
+    "token",
+    "authorization",
+})
+
+
+def _is_sensitive_log_key(name) -> bool:
+    return str(name).lower() in _SENSITIVE_LOG_KEYS
 
 
 # Instancia global para uso conveniente
