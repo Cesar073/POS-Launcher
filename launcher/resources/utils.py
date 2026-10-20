@@ -346,8 +346,12 @@ def safe_rename(src: Path, dst: Path, max_retries: int = 3, retry_delay: float =
         retry_delay: Segundos entre intentos
     
     Returns:
-        True si se renombró, False si falló
+        True si se renombró.
+
+    Raises:
+        OSError: Si el destino sigue bloqueado o el movimiento falla.
     """
+    last_error: Optional[BaseException] = None
     for attempt in range(max_retries):
         try:
             if dst.exists():
@@ -358,14 +362,17 @@ def safe_rename(src: Path, dst: Path, max_retries: int = 3, retry_delay: float =
             
             shutil.move(str(src), str(dst))
             return True
-        except PermissionError:
+        except PermissionError as exc:
+            last_error = exc
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
-            else:
-                return False
-        except Exception as e:
-            print(f"utils.py: safe_rename: Exception: {e}")
-            return False
+        except OSError as exc:
+            last_error = exc
+            break
+    if last_error is not None:
+        raise OSError(
+            f"No se pudo mover '{src}' → '{dst}': {last_error}"
+        ) from last_error
     return False
 
 

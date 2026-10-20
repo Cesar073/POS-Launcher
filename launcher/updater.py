@@ -842,8 +842,10 @@ class Updater:
             app_dir.mkdir(parents=True, exist_ok=True)
 
         app_path = app_dir / self.update_info.name
-        if not safe_rename(src=self.downloaded_file, dst=app_path):
-            raise UpdateError("Error al intentar mover el archivo comprimido a la carpeta de la app")
+        try:
+            safe_rename(src=self.downloaded_file, dst=app_path)
+        except OSError as exc:
+            raise UpdateError(f"Error al mover el archivo comprimido: {exc}") from exc
 
         with zipfile.ZipFile(app_path, "r") as zip_ref:
             top_level_dirs = {name.split("/")[0] for name in zip_ref.namelist() if "/" in name}
@@ -860,8 +862,12 @@ class Updater:
         new_app_path = app_path.parent / "POS"
 
         if extracted_folder.exists() and extracted_folder != new_app_path:
-            if not safe_rename(src=extracted_folder, dst=new_app_path):
-                raise UpdateError("Error al intentar mover la carpeta descomprimida a la carpeta de la app")
+            try:
+                safe_rename(src=extracted_folder, dst=new_app_path)
+            except OSError as exc:
+                raise UpdateError(
+                    f"Error al mover la carpeta descomprimida a POS: {exc}"
+                ) from exc
         elif not extracted_folder.exists() and not new_app_path.exists():
             raise UpdateError(
                 f"No se encontró la carpeta extraída '{extracted_folder_name}' en {app_path.parent}"
@@ -872,8 +878,12 @@ class Updater:
         else:
             executable_path = new_app_path / APP_EXECUTABLE
 
-        if not safe_rename(src=executable_path, dst=app_dir / "POS" / APP_EXECUTABLE):
-            raise UpdateError("Error al intentar mover el archivo executable a la carpeta de la app")
+        try:
+            safe_rename(src=executable_path, dst=app_dir / "POS" / APP_EXECUTABLE)
+        except OSError as exc:
+            raise UpdateError(
+                f"Error al renombrar el ejecutable a {APP_EXECUTABLE}: {exc}"
+            ) from exc
 
         copy_database_from_backup(app_dir)
         self._update_version_file(app_dir)

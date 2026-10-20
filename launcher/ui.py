@@ -30,7 +30,7 @@ from updater import Updater, UpdateInfo, UpdateError, user_message_for_activatio
 from backup_manager import BackupManager, BackupError
 
 from resources.utils import start_application
-from resources.exception_logging import log_exception
+from resources.exception_logging import get_log_file_path, log_exception
 
 class LauncherUI(ctk.CTk):
     """
@@ -657,12 +657,13 @@ class LauncherUI(ctk.CTk):
         self.changelog_frame.pack(fill="both", expand=True, pady=(0, 15))
         
         # Título
-        ctk.CTkLabel(
+        self.changelog_title = ctk.CTkLabel(
             self.changelog_frame,
             text="📋 Notas de la versión:",
             font=ctk.CTkFont(size=13, weight="bold"),
             anchor="w",
-        ).pack(fill="x")
+        )
+        self.changelog_title.pack(fill="x")
         
         # Área de texto para el changelog
         self.changelog_text = ctk.CTkTextbox(
@@ -847,8 +848,8 @@ class LauncherUI(ctk.CTk):
                     self.backup_manager.create_backup()
                     # Detener la barra antes de continuar
                     self.after(0, lambda: self.progress_bar.stop())
-                except BackupError as e:
-                    # Si falla el backup, continuar con la actualización pero mostrar advertencia
+                except BackupError as exc:
+                    log_exception(exc, context="create_backup antes de descargar")
                     self.after(0, lambda: self.progress_bar.stop())
             
             # Descargar
@@ -865,8 +866,8 @@ class LauncherUI(ctk.CTk):
             # Crear backup
             try:
                 backup_created = self.backup_manager.create_backup()
-            except BackupError as e:
-                pass
+            except BackupError as exc:
+                log_exception(exc, context="create_backup antes de instalar")
 
             # Aplicar actualización
             self.updater.apply_update()
@@ -874,13 +875,14 @@ class LauncherUI(ctk.CTk):
             # Éxito
             self.after(0, self._on_update_success)
         
-        except Exception as e:
+        except Exception as exc:
+            log_exception(exc, context="_download_and_apply")
             if backup_created:
                 try:
                     self.backup_manager.downgrade()
-                except Exception:
-                    pass
-            error_msg = f"Error inesperado: {e}"
+                except Exception as restore_exc:
+                    log_exception(restore_exc, context="downgrade tras fallo de actualización")
+            error_msg = f"{exc}\n\nRegistro: {get_log_file_path()}"
             self.after(0, lambda msg=error_msg: self._on_update_error(msg))
     
     def _on_update_success(self) -> None:
@@ -914,16 +916,24 @@ class LauncherUI(ctk.CTk):
         self.progress_bar.configure(mode="determinate")
         self.progress_bar.set(0)
         
+        self.title_label.configure(text="No se pudo actualizar", text_color=THEME_ERROR)
+        self.subtitle_label.configure(text="Detalle del fallo", text_color=THEME_ERROR)
         self.status_label.configure(
-            text=f"❌ Error: {error_message}",
+            text="❌ Error",
             text_color=THEME_ERROR,
         )
         self.progress_label.configure(text="")
         
-        # Ocultar progreso y mostrar changelog de nuevo
+        # El mensaje estaba en la barra de progreso; al ocultarla desaparecía.
         self.progress_frame.pack_forget()
+        if hasattr(self, "changelog_title"):
+            self.changelog_title.configure(text="Error:")
         if hasattr(self, 'changelog_text'):
             self.changelog_text.master.pack(fill="both", expand=True, pady=(0, 15))
+            self.changelog_text.configure(state="normal")
+            self.changelog_text.delete("1.0", "end")
+            self.changelog_text.insert("1.0", error_message)
+            self.changelog_text.configure(state="disabled")
         
         # Volver a mostrar y rehabilitar botones
         self._is_updating = False
@@ -990,11 +1000,13 @@ class LauncherUI(ctk.CTk):
             # Éxito
             self.after(0, self._on_restore_success)
         
-        except BackupError as e:
-            error_msg = str(e)
+        except BackupError as exc:
+            log_exception(exc, context="_restore_backup")
+            error_msg = f"{exc}\n\nRegistro: {get_log_file_path()}"
             self.after(0, lambda msg=error_msg: self._on_restore_error(msg))
-        except Exception as e:
-            error_msg = f"Error inesperado: {e}"
+        except Exception as exc:
+            log_exception(exc, context="_restore_backup")
+            error_msg = f"{exc}\n\nRegistro: {get_log_file_path()}"
             self.after(0, lambda msg=error_msg: self._on_restore_error(msg))
     
     def _on_restore_success(self) -> None:
@@ -1033,13 +1045,14 @@ class LauncherUI(ctk.CTk):
         self.progress_bar.set(0)
         
         self.status_label.configure(
-            text=f"❌ Error: {error_message}",
+            text="❌ Error",
             text_color=THEME_ERROR,
         )
         self.progress_label.configure(text="")
         self._is_updating = False
 
         if self.update_info is None:
+            self.status_label.configure(text=f"❌ Error: {error_message}")
             if hasattr(self, "changelog_frame"):
                 self.changelog_frame.pack_forget()
             self.progress_frame.pack(fill="x", pady=(0, 15))
@@ -1055,10 +1068,16 @@ class LauncherUI(ctk.CTk):
             self._start_redirect_countdown()
             return
 
-        # Ocultar progreso y mostrar changelog de nuevo
+        # Ocultar progreso y mostrar el error en el recuadro visible
         self.progress_frame.pack_forget()
+        if hasattr(self, "changelog_title"):
+            self.changelog_title.configure(text="Error:")
         if hasattr(self, 'changelog_text'):
             self.changelog_text.master.pack(fill="both", expand=True, pady=(0, 15))
+            self.changelog_text.configure(state="normal")
+            self.changelog_text.delete("1.0", "end")
+            self.changelog_text.insert("1.0", error_message)
+            self.changelog_text.configure(state="disabled")
 
         # Volver a mostrar y rehabilitar botones
         column = 0
