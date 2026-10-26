@@ -11,6 +11,7 @@ import hashlib
 import ctypes
 import ctypes.wintypes
 import json
+import logging
 import os
 import sys
 import shutil
@@ -21,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from resources.exception_logging import get_pos_startup_log_path, log_message
 from resources.logging_method import log_function
 
 from resources.config import (
@@ -487,80 +489,132 @@ def kill_process(process_name: str) -> bool:
             return False
 
 
+_STARTUP_OBSERVE_SECONDS = 5.0
+_STARTUP_POLL_SECONDS = 0.25
+_STARTUP_LOG_MAX_CHARS = 8000
+
+
+def _read_pos_startup_output(log_path: Path) -> str:
+    """Lee la salida capturada del POS, con tope para no inflar el log de errores."""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError as exc:
+        return f"(no se pudo leer {log_path}: {exc})"
+    if not text:
+        return "(sin salida)"
+    if len(text) > _STARTUP_LOG_MAX_CHARS:
+        return text[:_STARTUP_LOG_MAX_CHARS] + "\n… (salida truncada)"
+    return text
+
+
+def _log_pos_exit(exit_code: int, log_path: Path) -> None:
+    log_message(
+        logging.ERROR,
+        "start_application: POS terminó con código %s. Salida en %s\n%s",
+        exit_code,
+        log_path,
+        _read_pos_startup_output(log_path),
+    )
+
+
+def _watch_startup(process: subprocess.Popen) -> Optional[int]:
+    """Espera hasta 5 segundos. Devuelve el código de salida, o None si sigue vivo."""
+    deadline = time.monotonic() + _STARTUP_OBSERVE_SECONDS
+    while True:
+        exit_code = process.poll()
+        if exit_code is not None:
+            return exit_code
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        time.sleep(min(_STARTUP_POLL_SECONDS, remaining))
+
+
 @log_function
 def start_application(executable_path: Path, wait: bool = False) -> Optional[subprocess.Popen]:
     """
-    Inicia una aplicación.
-    
+    Inicia una aplicación y observa los primeros segundos sin matar el proceso.
+
+    stdout y stderr van a pos_startup.log. Si el proceso termina durante la
+    observación, el código y la salida quedan en launcher_errors.log.
+
     Args:
         executable_path: Ruta al ejecutable
-        wait: Si True, espera a que termine
-    
+        wait: Si True, espera a que termine después de la observación inicial
+
     Returns:
-        Objeto Popen si se inició (y wait=False), None si falló
+        Objeto Popen si sigue corriendo (y wait=False), None si falló o terminó
     """
     if not executable_path.exists():
-        print(f"start_application: El ejecutable no existe: {executable_path}")
-        return None
-    
-    work_dir = executable_path.parent
-    
-    # --- DIAGNÓSTICO TEMPORAL: capturar salida de POS.exe ---
-    # TODO: Quitar este diagnóstico temporal.
-    # Lo uso para ver porqué la app no puede iniciar desde el launcher.
-    try:
-        diag = subprocess.run(
-            [str(executable_path)],
-            cwd=str(work_dir),
-            capture_output=True,
-            timeout=5,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        log_message(
+            logging.ERROR,
+            "start_application: El ejecutable no existe: %s",
+            executable_path,
         )
-        print(f"start_application [DIAG]: exit_code={diag.returncode}")
-        if diag.stdout:
-            print(f"start_application [DIAG] STDOUT:\n{diag.stdout.decode('utf-8', errors='replace')}")
-        if diag.stderr:
-            print(f"start_application [DIAG] STDERR:\n{diag.stderr.decode('utf-8', errors='replace')}")
-    except subprocess.TimeoutExpired:
-        print("start_application [DIAG]: POS.exe sigue corriendo tras 5s (esto es bueno, no crashea)")
-    except Exception as e:
-        print(f"start_application [DIAG]: Error en diagnóstico: {e}")
-    # --- FIN DIAGNÓSTICO ---
-    
+        return None
+
+    work_dir = executable_path.parent
+    log_path = get_pos_startup_log_path()
+    startup_log = None
     try:
+        startup_log = open(log_path, "wb")
+    except OSError as exc:
+        log_message(
+            logging.ERROR,
+            "start_application: no se pudo abrir el log de arranque %s: %s",
+            log_path,
+            exc,
+        )
+
+    try:
+        popen_kwargs: dict = {
+            "cwd": str(work_dir),
+            "stdout": startup_log if startup_log is not None else subprocess.DEVNULL,
+            "stderr": subprocess.STDOUT if startup_log is not None else subprocess.DEVNULL,
+            "close_fds": True,
+        }
         if sys.platform == "win32":
-            process = subprocess.Popen(
-                [str(executable_path)],
-                cwd=str(work_dir),
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-                close_fds=True
+            popen_kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
             )
         else:
-            process = subprocess.Popen(
-                [str(executable_path)],
-                cwd=str(work_dir),
-                start_new_session=True,
-                close_fds=True
-            )
-        
-        print(f"start_application: Proceso iniciado PID={process.pid}")
-        time.sleep(0.5)
-        
-        exit_code = process.poll()
-        if exit_code is not None:
-            print(f"start_application: El proceso terminó inmediatamente con código {exit_code}")
-            return None
-        
-        print(f"start_application: Proceso corriendo correctamente (PID={process.pid})")
-        
-        if wait:
-            process.wait()
-            return None
-        
-        return process
-    except Exception as e:
-        print(f"start_application: Error al iniciar: {e}")
+            popen_kwargs["start_new_session"] = True
+
+        process = subprocess.Popen([str(executable_path)], **popen_kwargs)
+    except Exception as exc:
+        log_message(logging.ERROR, "start_application: Error al iniciar: %s", exc)
         return None
+    finally:
+        if startup_log is not None:
+            try:
+                startup_log.close()
+            except OSError:
+                pass
+
+    exit_code = _watch_startup(process)
+    if exit_code is not None:
+        _log_pos_exit(exit_code, log_path)
+        return None
+
+    log_message(
+        logging.INFO,
+        "start_application: POS sigue corriendo (PID=%s). Salida en %s",
+        process.pid,
+        log_path,
+    )
+
+    if wait:
+        exit_code = process.wait()
+        log_message(
+            logging.INFO,
+            "start_application: POS terminó tras la espera con código %s. Salida en %s\n%s",
+            exit_code,
+            log_path,
+            _read_pos_startup_output(log_path),
+        )
+        return None
+
+    return process
 
 
 # ============================================================================

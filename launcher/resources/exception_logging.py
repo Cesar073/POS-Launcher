@@ -21,6 +21,7 @@ from typing import Optional
 
 _logger: Optional[logging.Logger] = None
 _LOG_FILENAME = "launcher_errors.log"
+_POS_STARTUP_LOG_FILENAME = "pos_startup.log"
 _OFFSET_FILENAME = ".launcher_errors.upload_offset"
 
 
@@ -49,6 +50,11 @@ def get_log_file_path() -> Path:
         except OSError:
             pass
     return new_path
+
+
+def get_pos_startup_log_path() -> Path:
+    """stdout/stderr del POS lanzado por el launcher: Launcher/logs/pos_startup.log."""
+    return get_log_file_path().parent / _POS_STARTUP_LOG_FILENAME
 
 
 def _ensure_logger() -> logging.Logger:
