@@ -10,4 +10,4 @@ El launcher es un ejecutable separado que el usuario ejecuta.
 Internamente maneja las actualizaciones y luego inicia POS.exe.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"

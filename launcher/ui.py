@@ -31,6 +31,7 @@ from backup_manager import BackupManager, BackupError
 
 from resources.utils import start_application
 from resources.exception_logging import get_log_file_path, log_exception
+from resources.version import get_version
 
 class LauncherUI(ctk.CTk):
     """
@@ -99,7 +100,7 @@ class LauncherUI(ctk.CTk):
     
     def _setup_window(self) -> None:
         """Configura la ventana principal."""
-        self.title(WINDOW_TITLE)
+        self.title(f"{WINDOW_TITLE} v{get_version()}")
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.resizable(False, False)
         

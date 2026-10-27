@@ -38,7 +38,7 @@ from resources.config import get_launcher_dir
 # INFORMACIÓN DE LA APLICACIÓN
 # ============================================================================
 
-__version__ = "0.2.1"
+__version__ = "1.0.0"
 
 
 # Notas de release (changelog) para esta versión
@@ -59,10 +59,10 @@ EJEMPLO PARA USAR EN CHANGELOG:
 - Actualización recomendada para todos los usuarios
 """
 __changelog__ = """
-## Cambios en v0.2.1
+## Cambios en v1.0.0
 
-### Correcciones
-- Bug de ubicaciones de archivos en Windows.
+### Nuevas características
+- La barra de la ventana muestra la versión del launcher.
 """
 
 APP_NAME = "POS"
