@@ -38,7 +38,7 @@ from resources.config import get_launcher_dir
 # INFORMACIÓN DE LA APLICACIÓN
 # ============================================================================
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 # Notas de release (changelog) para esta versión
@@ -59,7 +59,7 @@ EJEMPLO PARA USAR EN CHANGELOG:
 - Actualización recomendada para todos los usuarios
 """
 __changelog__ = """
-## Cambios en v1.0.0
+## Cambios en v1.1.0
 
 ### Nuevas características
 - La barra de la ventana muestra la versión del launcher.
